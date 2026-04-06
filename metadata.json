@@ -1,0 +1,9 @@
+{
+  "name": "FarmMech Hierarchy Pro",
+  "description": "Hierarchical farm machinery management system for Admin, District Managers, Area Managers, CFs, and Operators with real-time tracking and assignment workflows.",
+  "requestFramePermissions": [
+    "camera",
+    "microphone",
+    "geolocation"
+  ]
+}

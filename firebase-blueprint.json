@@ -1,0 +1,155 @@
+{
+  "entities": {
+    "User": {
+      "title": "User",
+      "description": "App user with role assignment and hierarchy.",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string" },
+        "email": { "type": "string" },
+        "role": { "type": "string", "enum": ["admin", "district_manager", "area_manager", "community_facilitator", "operator"] },
+        "displayName": { "type": "string" },
+        "parentId": { "type": "string", "description": "UID of the manager above this user" },
+        "district": { "type": "string" },
+        "area": { "type": "string" }
+      },
+      "required": ["uid", "email", "role"]
+    },
+    "Planter": {
+      "title": "Planter",
+      "description": "A multicrop planter machine.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Unique machine ID (e.g., P-001)" },
+        "name": { "type": "string" },
+        "type": { "type": "string" },
+        "serialNumber": { "type": "string" },
+        "operatingStatus": { "type": "string", "enum": ["operating", "maintenance", "idle"], "description": "Current status of the machine" },
+        "currentHolderId": { "type": "string", "description": "UID of the current holder" },
+        "currentHolderRole": { "type": "string", "enum": ["admin", "district_manager", "area_manager", "community_facilitator", "operator"] },
+        "location": { "type": "string", "description": "Current location (GPS or name)" },
+        "lat": { "type": "number" },
+        "lng": { "type": "number" },
+        "lastReading": { "type": "number" },
+        "lastUpdated": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "operatingStatus", "currentHolderId", "currentHolderRole"]
+    },
+    "Assignment": {
+      "title": "Assignment",
+      "description": "Tracking the transfer of a machine between roles.",
+      "type": "object",
+      "properties": {
+        "machineId": { "type": "string" },
+        "fromUserId": { "type": "string" },
+        "fromRole": { "type": "string" },
+        "toUserId": { "type": "string" },
+        "toRole": { "type": "string" },
+        "timestamp": { "type": "string", "format": "date-time" },
+        "status": { "type": "string", "enum": ["pending", "accepted", "rejected"] }
+      },
+      "required": ["machineId", "fromUserId", "toUserId", "timestamp", "status"]
+    },
+    "ReadingUpdate": {
+      "title": "Reading Update",
+      "description": "A log entry for a counter update.",
+      "type": "object",
+      "properties": {
+        "planterId": { "type": "string", "description": "ID of the planter" },
+        "previousReading": { "type": "number", "description": "Reading before update" },
+        "newReading": { "type": "number", "description": "New reading from counter" },
+        "distanceKm": { "type": "number", "description": "Calculated distance in KM" },
+        "areaWorked": { "type": "number", "description": "Calculated area in acres/hectares" },
+        "imageUrl": { "type": "string", "description": "URL of the proof image" },
+        "timestamp": { "type": "string", "format": "date-time", "description": "Time of update" },
+        "updatedBy": { "type": "string", "description": "User who performed the update" }
+      },
+      "required": ["planterId", "previousReading", "newReading", "distanceKm", "timestamp"]
+    },
+    "MaintenanceLog": {
+      "title": "Maintenance Log",
+      "description": "A detailed record of maintenance performed on a machine with approval workflow.",
+      "type": "object",
+      "properties": {
+        "planterId": { "type": "string", "description": "ID of the planter" },
+        "technicianName": { "type": "string", "description": "Name of the technician" },
+        "partsUsed": { "type": "array", "items": { "type": "string" }, "description": "List of parts replaced or used" },
+        "notes": { "type": "string", "description": "Detailed technician notes" },
+        "timestamp": { "type": "string", "format": "date-time", "description": "Time of maintenance" },
+        "cost": { "type": "number", "description": "Optional cost of maintenance" },
+        "approvalStatus": { "type": "string", "enum": ["pending_area_manager", "pending_district_manager", "pending_farm_mech", "approved", "rejected"] },
+        "approvals": {
+          "type": "object",
+          "properties": {
+            "areaManager": { "type": "object", "properties": { "approved": { "type": "boolean" }, "by": { "type": "string" }, "at": { "type": "string" } } },
+            "districtManager": { "type": "object", "properties": { "approved": { "type": "boolean" }, "by": { "type": "string" }, "at": { "type": "string" } } },
+            "farmMechManager": { "type": "object", "properties": { "approved": { "type": "boolean" }, "by": { "type": "string" }, "at": { "type": "string" } } }
+          }
+        }
+      },
+      "required": ["planterId", "technicianName", "notes", "timestamp", "approvalStatus"]
+    },
+    "MaintenanceRequest": {
+      "title": "Maintenance Request",
+      "description": "A request for maintenance or repair on a machine.",
+      "type": "object",
+      "properties": {
+        "planterId": { "type": "string", "description": "ID of the planter" },
+        "requestType": { "type": "string", "enum": ["repair", "regular_service"] },
+        "severity": { "type": "string", "enum": ["low", "medium", "high", "critical"] },
+        "partDamaged": { "type": "string", "description": "Specific part that needs attention" },
+        "description": { "type": "string", "description": "Detailed description of the issue" },
+        "requestedBy": { "type": "string", "description": "User who raised the request" },
+        "timestamp": { "type": "string", "format": "date-time", "description": "Time of request" },
+        "status": { "type": "string", "enum": ["open", "in_progress", "completed", "cancelled"] }
+      },
+      "required": ["planterId", "requestType", "severity", "description", "requestedBy", "timestamp", "status"]
+    },
+    "Notification": {
+      "title": "Notification",
+      "description": "In-app notification for users or roles.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string", "description": "Target user ID (optional)" },
+        "targetRole": { "type": "string", "enum": ["admin", "community_facilitator", "area_manager", "district_manager", "farm_mechanization", "operator"], "description": "Target role (optional)" },
+        "title": { "type": "string", "description": "Notification title" },
+        "message": { "type": "string", "description": "Notification message" },
+        "type": { "type": "string", "enum": ["info", "warning", "error", "success"] },
+        "read": { "type": "boolean", "description": "Whether the notification has been read" },
+        "timestamp": { "type": "string", "format": "date-time", "description": "Time of notification" },
+        "link": { "type": "string", "description": "Link to relevant resource" }
+      },
+      "required": ["title", "message", "type", "read", "timestamp"]
+    }
+  },
+  "firestore": {
+    "/planters/{planterId}": {
+      "schema": "Planter",
+      "description": "Collection of multicrop planters."
+    },
+    "/assignments/{assignmentId}": {
+      "schema": "Assignment",
+      "description": "History of machine assignments."
+    },
+    "/users/{userId}": {
+      "schema": "User",
+      "description": "User profiles and roles."
+    },
+    "/updates/{updateId}": {
+      "schema": "ReadingUpdate",
+      "description": "Log of all reading updates."
+    },
+    "/maintenance_logs/{logId}": {
+      "schema": "MaintenanceLog",
+      "description": "Detailed maintenance history logs."
+    },
+    "/maintenance_requests/{requestId}": {
+      "schema": "MaintenanceRequest",
+      "description": "Maintenance and repair requests."
+    },
+    "/notifications/{notificationId}": {
+      "schema": "Notification",
+      "description": "In-app notifications."
+    }
+  }
+}
