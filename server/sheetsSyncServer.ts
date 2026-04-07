@@ -15,7 +15,7 @@ const app = express();
 app.use(express.json({ limit: '2mb' }));
 const upload = multer({ storage: multer.memoryStorage() });
 
-const PORT = Number(process.env.SHEETS_SYNC_PORT || 8787);
+const PORT = Number(process.env.PORT || process.env.SHEETS_SYNC_PORT || 8787);
 const STATE_PATH = path.resolve(process.cwd(), '.sheets-sync.json');
 
 const sheetTitleCache = new Map<string, number>();
@@ -459,6 +459,28 @@ app.post('/api/drive/upload', upload.single('file'), async (req, res) => {
     });
   }
 });
+
+// Serve frontend build artifacts from dist/
+const distPath = path.resolve(process.cwd(), 'dist');
+if (fs.existsSync(distPath)) {
+  console.log(`Serving static files from ${distPath}`);
+  app.use(express.static(distPath));
+  
+  // SPA catch-all: Always serve index.html for any unknown routes
+  app.get('*', (req, res) => {
+    // Only serve index.html for non-API routes
+    if (!req.path.startsWith('/api/') && !req.path.startsWith('/health')) {
+      const idx = path.join(distPath, 'index.html');
+      if (fs.existsSync(idx)) {
+        res.sendFile(idx);
+      } else {
+        res.status(404).send('Frontend not built. Run npm run build.');
+      }
+    } else {
+      res.status(404).json({ error: 'Not Found' });
+    }
+  });
+}
 
 app.listen(PORT, () => {
   console.log(`Google Sheets sync server listening on http://localhost:${PORT}`);

@@ -7,12 +7,12 @@ const getSheetsSyncBaseUrl = () => {
     return 'http://localhost:8787';
   }
 
-  return '';
+  return typeof window !== 'undefined' ? window.location.origin : '';
 };
 
 const postToSheets = async (path: string, payload: Record<string, unknown>) => {
   const baseUrl = getSheetsSyncBaseUrl();
-  if (!baseUrl) return;
+  if (baseUrl === undefined) return;
 
   try {
     await fetch(`${baseUrl}${path}`, {
@@ -35,7 +35,7 @@ export const deleteSheetDocument = async (collection: string, documentId: string
 
 export const getSheetInfo = async () => {
   const baseUrl = getSheetsSyncBaseUrl();
-  if (!baseUrl) return null;
+  if (baseUrl === undefined) return null;
 
   try {
     const response = await fetch(`${baseUrl}/api/sheets/info`);
@@ -57,7 +57,7 @@ export const uploadDriveFile = async ({
   bucket: 'gallery' | 'proofs';
 }) => {
   const baseUrl = getSheetsSyncBaseUrl();
-  if (!baseUrl) return null;
+  if (baseUrl === undefined) return null;
 
   const formData = new FormData();
   formData.append('file', file);
