@@ -469,6 +469,7 @@ const OrgTreeNode = ({
   level,
   canManageUser
 }: {
+  key?: string | number;
   user: UserProfile;
   allUsers: UserProfile[];
   planters: Planter[];
@@ -952,6 +953,70 @@ export default function App() {
   const [selectedMachineIds, setSelectedMachineIds] = useState<string[]>([]);
   const [showAddUserForm, setShowAddUserForm] = useState(false);
   const [addUserForm, setAddUserForm] = useState<ManagedUserFormState>(createEmptyUserForm());
+  const [assignedPage, setAssignedPage] = useState(1);
+  const [unassignedPage, setUnassignedPage] = useState(1);
+  const [showAddMachineModal, setShowAddMachineModal] = useState(false);
+  const [newMachineData, setNewMachineData] = useState({ id: '', type: 'Planter Pro', state: '', district: '', mandal: '', location: '', lat: '', lng: '' });
+  const [addMachineLoading, setAddMachineLoading] = useState(false);
+  const [geocodingLoading, setGeocodingLoading] = useState(false);
+
+  const fetchCurrentGPS = () => {
+    if ("geolocation" in navigator) {
+      navigator.geolocation.getCurrentPosition(
+        (position) => {
+          setNewMachineData(prev => ({
+            ...prev,
+            lat: position.coords.latitude.toFixed(6),
+            lng: position.coords.longitude.toFixed(6)
+          }));
+        },
+        (error) => {
+          console.error("Geolocation error:", error);
+          alert("Could not retrieve current location. Please check browser permissions.");
+        }
+      );
+    }
+  };
+
+  const syncAddressFromCoords = async () => {
+    const { lat, lng } = newMachineData;
+    if (!lat || !lng) {
+      return;
+    }
+    
+    setGeocodingLoading(true);
+    try {
+      const response = await fetch(`https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lng}&zoom=18&addressdetails=1&accept-language=en`);
+      const data = await response.json();
+      
+      if (data && data.address) {
+        const addr = data.address;
+        setNewMachineData(prev => ({
+          ...prev,
+          state: addr.state || addr.region || prev.state,
+          district: addr.state_district || addr.county || addr.district || prev.district,
+          mandal: addr.subdistrict || addr.township || addr.suburb || addr.town || addr.city_district || addr.neighbourhood || prev.mandal,
+          location: addr.village || addr.hamlet || addr.neighbourhood || addr.road || addr.suburb || prev.location
+        }));
+      }
+    } catch (error) {
+      console.error("Geocoding error:", error);
+    } finally {
+      setGeocodingLoading(false);
+    }
+  };
+
+  // Auto-fill address when lat/lng are updated (1s debounce)
+  useEffect(() => {
+    const l1 = parseFloat(newMachineData.lat);
+    const l2 = parseFloat(newMachineData.lng);
+    if (!isNaN(l1) && !isNaN(l2) && l1 !== 0 && l2 !== 0) {
+      const timer = setTimeout(() => {
+        syncAddressFromCoords();
+      }, 1000);
+      return () => clearTimeout(timer);
+    }
+  }, [newMachineData.lat, newMachineData.lng]);
   const [editingUserId, setEditingUserId] = useState<string | null>(null);
   const [addUserLoading, setAddUserLoading] = useState(false);
   const [addUserError, setAddUserError] = useState<string | null>(null);
@@ -1000,6 +1065,15 @@ export default function App() {
   useEffect(() => {
     setShowRequestForm(false);
   }, [selectedPlanter?.id]);
+
+  useEffect(() => {
+    if (!selectedPlanter) return;
+
+    const updatedPlanter = planters.find(planter => planter.id === selectedPlanter.id);
+    if (updatedPlanter && updatedPlanter !== selectedPlanter) {
+      setSelectedPlanter(updatedPlanter);
+    }
+  }, [planters, selectedPlanter]);
 
   const refreshAdminStoragePanel = async () => {
     if (userProfile?.role !== 'admin') return;
@@ -1302,14 +1376,19 @@ export default function App() {
     setLoginLoading(true);
     setLoginError(null);
     try {
-      // Look up user by email in Firestore
-      const q = query(collection(db, 'users'), where('email', '==', email));
-      const snap = await getDocs(q);
+      // Look up user by email in local snapshot first for instant offline-friendly login
+      let profile = allUsers.find(u => u.email.toLowerCase() === email) || null;
 
-      let profile: UserProfile | null = null;
-      if (!snap.empty) {
-        profile = snap.docs[0].data() as UserProfile;
-      } else if (email === 'ganeshkeesara123@gmail.com' || email === 'ganeskeesara123@gmail.com') {
+      if (!profile) {
+        // Fallback to active query
+        const q = query(collection(db, 'users'), where('email', '==', email));
+        const snap = await getDocs(q);
+        if (!snap.empty) {
+          profile = snap.docs[0].data() as UserProfile;
+        }
+      }
+      
+      if (!profile && (email === 'ganeshkeesara123@gmail.com' || email === 'ganeskeesara123@gmail.com')) {
         // Auto-create admin profile
         const uid = `admin_${Date.now()}`;
         profile = { uid, email, role: 'admin', displayName: 'Admin' };
@@ -1976,7 +2055,7 @@ export default function App() {
       const targetUid = editingUserId || `pending_${addUserForm.email.trim().replace(/[^a-z0-9]/gi, '_')}_${Date.now()}`;
       
       const newProfile: any = {
-        email: addUserForm.email.trim(),
+        email: addUserForm.email.trim().toLowerCase(),
         role: addUserForm.role,
         displayName: addUserForm.displayName.trim(),
         assignedState: addUserForm.assignedState.trim(),
@@ -2088,13 +2167,19 @@ export default function App() {
 
   const filteredPlanters = useMemo(() => {
     return myPlanters.filter(p => {
+      const holderName = allUsers.find(u => u.uid === p.currentHolderId)?.displayName || 'Unknown';
+      
       const matchesSearch = p.id.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        (p.name || '').toLowerCase().includes(searchTerm.toLowerCase());
+        (p.name || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
+        holderName.toLowerCase().includes(searchTerm.toLowerCase());
+        
       const matchesMandal = filterMandal === 'All' || p.mandal === filterMandal;
       const matchesDistrict = filterDistrict === 'All' || p.district === filterDistrict;
-      return matchesSearch && matchesMandal && matchesDistrict;
+      const matchesFacilitator = filterFacilitator === 'All' || holderName === filterFacilitator;
+      
+      return matchesSearch && matchesMandal && matchesDistrict && matchesFacilitator;
     });
-  }, [myPlanters, searchTerm, filterMandal, filterDistrict]);
+  }, [myPlanters, searchTerm, filterMandal, filterDistrict, filterFacilitator, allUsers]);
 
   const sortedPlanters = useMemo(() => {
     return [...filteredPlanters].sort((a, b) => {
@@ -2114,6 +2199,29 @@ export default function App() {
       return 0;
     });
   }, [filteredPlanters, sortBy, sortOrder]);
+
+  const ITEMS_PER_PAGE = 12;
+
+  const fleetMachineData = useMemo(() => {
+    const adminUids = allUsers.filter(u => u.role === 'admin' || u.role === 'farm_mechanization').map(u => u.uid);
+    const assignedPlanters = sortedPlanters.filter(p => p.currentHolderId && !adminUids.includes(p.currentHolderId));
+    const unassignedPlanters = sortedPlanters.filter(p => !p.currentHolderId || adminUids.includes(p.currentHolderId));
+
+    const totalAssignedPages = Math.ceil(assignedPlanters.length / ITEMS_PER_PAGE);
+    const totalUnassignedPages = Math.ceil(unassignedPlanters.length / ITEMS_PER_PAGE);
+    
+    const paginatedAssigned = assignedPlanters.slice((assignedPage - 1) * ITEMS_PER_PAGE, assignedPage * ITEMS_PER_PAGE);
+    const paginatedUnassigned = unassignedPlanters.slice((unassignedPage - 1) * ITEMS_PER_PAGE, unassignedPage * ITEMS_PER_PAGE);
+
+    return {
+      assignedPlanters,
+      unassignedPlanters,
+      totalAssignedPages,
+      totalUnassignedPages,
+      paginatedAssigned,
+      paginatedUnassigned
+    };
+  }, [sortedPlanters, allUsers, assignedPage, unassignedPage]);
 
   const mandals = useMemo(() => {
     const set = new Set(myPlanters.map(p => p.mandal).filter(Boolean));
@@ -2545,6 +2653,185 @@ export default function App() {
                     )}
                 </div>
               </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* Add Machine Modal */}
+      <AnimatePresence>
+        {showAddMachineModal && (
+          <div className="fixed inset-0 bg-black/80 z-[100] flex items-center justify-center p-6">
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              className="bg-white rounded-[40px] w-full max-w-lg p-8 shadow-2xl relative overflow-hidden"
+            >
+              <div className="flex justify-between items-center mb-6 relative z-10">
+                <h2 className="text-3xl font-serif">Register Machine</h2>
+                <button onClick={() => setShowAddMachineModal(false)} className="p-2 hover:bg-black/5 rounded-full transition-colors">
+                  <X className="w-6 h-6" />
+                </button>
+              </div>
+
+              <form onSubmit={async (e) => {
+                e.preventDefault();
+                if (!newMachineData.id || !user) return;
+                setAddMachineLoading(true);
+                try {
+                  const newPlanter: Planter = {
+                    id: newMachineData.id,
+                    type: newMachineData.type,
+                    operatingStatus: 'idle',
+                    currentHolderId: user.uid,
+                    currentHolderRole: userProfile?.role || 'admin',
+                    location: newMachineData.location,
+                    mandal: newMachineData.mandal,
+                    district: newMachineData.district,
+                    state: newMachineData.state,
+                    lat: parseFloat(newMachineData.lat) || undefined,
+                    lng: parseFloat(newMachineData.lng) || undefined,
+                    lastReading: 0,
+                    lastUpdated: new Date().toISOString(),
+                    gallery: []
+                  };
+                  await setDoc(doc(db, 'planters', newPlanter.id), newPlanter);
+                  void syncFirestoreDocumentData('planters', newPlanter.id, newPlanter as any);
+                  setShowAddMachineModal(false);
+                  setNewMachineData({ id: '', type: 'Planter Pro', state: '', district: '', mandal: '', location: '', lat: '', lng: '' });
+                  createNotification({ type: 'success', title: 'Machine Registered', message: `Machine ${newPlanter.id} successfully added.` });
+                } catch (err) {
+                  console.error(err);
+                  alert('Failed to register machine');
+                } finally {
+                  setAddMachineLoading(false);
+                }
+              }} className="space-y-4 relative z-10">
+                
+                <div className="bg-[#F5F5F0]/50 p-4 rounded-2xl border border-black/5 space-y-4">
+                  <div className="flex justify-between items-center mb-1">
+                    <p className="text-[10px] font-bold text-[#5A5A40]/60 uppercase tracking-widest">Coordinates (GPS)</p>
+                    <div className="flex gap-2">
+                       <button 
+                        type="button"
+                        onClick={fetchCurrentGPS}
+                        className="text-[10px] bg-white border border-slate-200 px-3 py-1 rounded-lg hover:bg-slate-50 transition-colors flex items-center gap-1.5 font-bold text-slate-600 shadow-sm"
+                       >
+                         <MapPin className="w-3 h-3" /> Get Current
+                       </button>
+                       <button 
+                        type="button"
+                        disabled={geocodingLoading || !newMachineData.lat || !newMachineData.lng}
+                        onClick={syncAddressFromCoords}
+                        className="text-[10px] bg-emerald-50 text-emerald-700 border border-emerald-100 px-3 py-1 rounded-lg hover:bg-emerald-100 transition-colors flex items-center gap-1.5 font-bold shadow-sm disabled:opacity-50"
+                       >
+                         {geocodingLoading ? <Loader2 className="w-3 h-3 animate-spin" /> : <Network className="w-3 h-3" />}
+                         Sync Address
+                       </button>
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <input 
+                        type="text" 
+                        placeholder="Latitude (e.g. 17.38)"
+                        value={newMachineData.lat} 
+                        onChange={e => setNewMachineData(prev => ({ ...prev, lat: e.target.value }))}
+                        className="w-full bg-white p-3 border-none rounded-xl focus:ring-2 focus:ring-emerald-500 text-sm font-mono"
+                      />
+                    </div>
+                    <div>
+                      <input 
+                        type="text" 
+                        placeholder="Longitude (e.g. 78.48)"
+                        value={newMachineData.lng} 
+                        onChange={e => setNewMachineData(prev => ({ ...prev, lng: e.target.value }))}
+                        className="w-full bg-white p-3 border-none rounded-xl focus:ring-2 focus:ring-emerald-500 text-sm font-mono"
+                      />
+                    </div>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <label className="text-[10px] font-bold text-[#5A5A40]/60 uppercase tracking-widest mb-1 block">Machine ID</label>
+                    <input 
+                      required 
+                      type="text" 
+                      placeholder="e.g. MACH-001"
+                      value={newMachineData.id} 
+                      onChange={e => setNewMachineData(prev => ({ ...prev, id: e.target.value.toUpperCase() }))}
+                      className="w-full bg-[#F5F5F0] p-3 border-none rounded-xl focus:ring-2 focus:ring-emerald-500 font-bold"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-[10px] font-bold text-[#5A5A40]/60 uppercase tracking-widest mb-1 block">Type/Model</label>
+                    <input 
+                      required 
+                      type="text" 
+                      value={newMachineData.type} 
+                      onChange={e => setNewMachineData(prev => ({ ...prev, type: e.target.value }))}
+                      className="w-full bg-[#F5F5F0] p-3 border-none rounded-xl focus:ring-2 focus:ring-emerald-500"
+                    />
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <label className="text-[10px] font-bold text-[#5A5A40]/60 uppercase tracking-widest mb-1 block">State</label>
+                    <input 
+                      required 
+                      type="text" 
+                      value={newMachineData.state} 
+                      onChange={e => setNewMachineData(prev => ({ ...prev, state: e.target.value }))}
+                      className="w-full bg-[#F5F5F0] p-3 border-none rounded-xl focus:ring-2 focus:ring-emerald-500"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-[10px] font-bold text-[#5A5A40]/60 uppercase tracking-widest mb-1 block">District</label>
+                    <input 
+                      required 
+                      type="text" 
+                      value={newMachineData.district} 
+                      onChange={e => setNewMachineData(prev => ({ ...prev, district: e.target.value }))}
+                      className="w-full bg-[#F5F5F0] p-3 border-none rounded-xl focus:ring-2 focus:ring-emerald-500"
+                    />
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <label className="text-[10px] font-bold text-[#5A5A40]/60 uppercase tracking-widest mb-1 block">Mandal</label>
+                    <input 
+                      required 
+                      type="text" 
+                      value={newMachineData.mandal} 
+                      onChange={e => setNewMachineData(prev => ({ ...prev, mandal: e.target.value }))}
+                      className="w-full bg-[#F5F5F0] p-3 border-none rounded-xl focus:ring-2 focus:ring-emerald-500"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-[10px] font-bold text-[#5A5A40]/60 uppercase tracking-widest mb-1 block">Village/Location</label>
+                    <input 
+                      required 
+                      type="text" 
+                      value={newMachineData.location} 
+                      onChange={e => setNewMachineData(prev => ({ ...prev, location: e.target.value }))}
+                      className="w-full bg-[#F5F5F0] p-3 border-none rounded-xl focus:ring-2 focus:ring-emerald-500"
+                    />
+                  </div>
+                </div>
+
+                <div className="pt-4 mt-6 border-t border-black/5 flex justify-end gap-3">
+                  <button type="button" onClick={() => setShowAddMachineModal(false)} className="px-6 py-3 font-bold text-slate-500 hover:text-slate-800 transition-colors">
+                    Cancel
+                  </button>
+                  <button type="submit" disabled={addMachineLoading} className="px-8 py-3 bg-emerald-600 text-white rounded-xl font-bold tracking-wide shadow-lg shadow-emerald-500/20 hover:bg-emerald-500 transition-colors disabled:opacity-50">
+                    {addMachineLoading ? 'Registering...' : 'Register Machine'}
+                  </button>
+                </div>
+              </form>
             </motion.div>
           </div>
         )}
@@ -3763,14 +4050,14 @@ export default function App() {
             <div className="lg:col-span-3 space-y-6">
               <div className="bg-white rounded-[24px] p-6 border border-black/5 shadow-sm">
                 <h3 className="text-sm font-semibold uppercase tracking-wider text-[#5A5A40]/60 mb-4">Search</h3>
-                <div className="relative">
-                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-[#5A5A40]/40" />
+                <div className="relative group">
+                  <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-emerald-600/60 group-focus-within:text-emerald-600 transition-colors" />
                   <input
                     type="text"
                     placeholder="Machine ID or Incharge..."
                     value={searchTerm}
                     onChange={(e) => setSearchTerm(e.target.value)}
-                    className="w-full pl-10 pr-4 py-2 bg-[#F5F5F0] rounded-xl border-none focus:ring-2 focus:ring-[#5A5A40]/20 text-sm"
+                    className="w-full pl-11 pr-5 py-3 bg-[#F5F5F0]/80 rounded-full border border-transparent focus:bg-white focus:border-emerald-500 focus:ring-4 focus:ring-emerald-500/10 text-sm transition-all shadow-sm group-focus-within:shadow-md"
                   />
                 </div>
               </div>
@@ -3784,7 +4071,7 @@ export default function App() {
                     <select
                       value={filterMandal}
                       onChange={(e) => setFilterMandal(e.target.value)}
-                      className="w-full bg-[#F5F5F0] rounded-xl border-none text-sm p-2"
+                      className="w-full bg-[#F5F5F0] hover:bg-[#EAEAEA] rounded-xl border border-transparent hover:border-slate-300 text-sm p-2.5 transition-all outline-none focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/20 cursor-pointer"
                     >
                       {mandals.map(m => <option key={m} value={m}>{m}</option>)}
                     </select>
@@ -3795,7 +4082,7 @@ export default function App() {
                     <select
                       value={filterDistrict}
                       onChange={(e) => setFilterDistrict(e.target.value)}
-                      className="w-full bg-[#F5F5F0] rounded-xl border-none text-sm p-2"
+                      className="w-full bg-[#F5F5F0] hover:bg-[#EAEAEA] rounded-xl border border-transparent hover:border-slate-300 text-sm p-2.5 transition-all outline-none focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/20 cursor-pointer"
                     >
                       {districts.map(d => <option key={d} value={d}>{d}</option>)}
                     </select>
@@ -3806,7 +4093,7 @@ export default function App() {
                     <select
                       value={filterFacilitator}
                       onChange={(e) => setFilterFacilitator(e.target.value)}
-                      className="w-full bg-[#F5F5F0] rounded-xl border-none text-sm p-2"
+                      className="w-full bg-[#F5F5F0] hover:bg-[#EAEAEA] rounded-xl border border-transparent hover:border-slate-300 text-sm p-2.5 transition-all outline-none focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/20 cursor-pointer"
                     >
                       {facilitators.map(f => <option key={f} value={f}>{f}</option>)}
                     </select>
@@ -3818,7 +4105,7 @@ export default function App() {
                       <select
                         value={sortBy}
                         onChange={(e) => setSortBy(e.target.value as any)}
-                        className="flex-1 bg-[#F5F5F0] rounded-xl border-none text-sm p-2"
+                        className="flex-1 bg-[#F5F5F0] hover:bg-[#EAEAEA] rounded-xl border border-transparent hover:border-slate-300 text-sm p-2.5 transition-all outline-none focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/20 cursor-pointer"
                       >
                         <option value="id">Machine ID</option>
                         <option value="location">Village</option>
@@ -3831,10 +4118,10 @@ export default function App() {
                       </select>
                       <button
                         onClick={() => setSortOrder(prev => prev === 'asc' ? 'desc' : 'asc')}
-                        className="px-3 bg-[#F5F5F0] rounded-xl border-none text-sm p-2 hover:bg-black/5 transition-colors"
+                        className="px-3 bg-[#F5F5F0] hover:bg-[#EAEAEA] rounded-xl border border-transparent hover:border-slate-300 transition-all text-[#5A5A40] outline-none focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/20 flex items-center justify-center cursor-pointer"
                         title={sortOrder === 'asc' ? "Sort Ascending" : "Sort Descending"}
                       >
-                        {sortOrder === 'asc' ? <ArrowUpAZ className="w-4 h-4 text-[#5A5A40]" /> : <ArrowDownZA className="w-4 h-4 text-[#5A5A40]" />}
+                        {sortOrder === 'asc' ? <ArrowUpAZ className="w-4 h-4" /> : <ArrowDownZA className="w-4 h-4" />}
                       </button>
                     </div>
                   </div>
@@ -3873,13 +4160,16 @@ export default function App() {
                 </div>
               </div>
 
-              <div className="bg-[#5A5A40] text-white rounded-[24px] p-6 shadow-lg">
-                <h3 className="text-sm font-medium opacity-80 mb-1">Total Area Covered</h3>
-                <p className="text-3xl font-serif mb-4">
-                  {myPlanters.reduce((acc, p) => acc + calcArea(p.lastReading), 0).toFixed(1)} acres
+              <div className="bg-gradient-to-br from-emerald-600 to-teal-800 text-white rounded-[24px] p-6 shadow-xl shadow-emerald-900/20 relative overflow-hidden group">
+                <div className="absolute top-0 right-0 w-32 h-32 bg-white/10 rounded-full blur-2xl -mr-10 -mt-10 group-hover:scale-110 transition-transform duration-700" />
+                <h3 className="text-sm font-medium opacity-80 mb-1 relative z-10">Total Area Covered</h3>
+                <p className="text-4xl font-serif mb-4 relative z-10 flex items-baseline gap-2">
+                  {myPlanters.reduce((acc, p) => acc + calcArea(p.lastReading), 0).toFixed(1)} <span className="text-sm font-sans font-medium opacity-80">acres</span>
                 </p>
-                <div className="h-1 bg-white/20 rounded-full overflow-hidden">
-                  <div className="h-full bg-white w-2/3" />
+                <div className="h-1.5 bg-white/20 rounded-full overflow-hidden relative z-10">
+                  <div className="h-full bg-white w-2/3 rounded-full relative overflow-hidden">
+                    <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/40 to-transparent -translate-x-full animate-[shimmer_2s_infinite]" />
+                  </div>
                 </div>
               </div>
             </div>
@@ -3890,51 +4180,63 @@ export default function App() {
                 <div className="flex items-center gap-4">
                   <button
                     onClick={() => {
-                      if (selectedMachineIds.length === filteredPlanters.length) {
-                        setSelectedMachineIds([]);
+                      const visibleIds = [...fleetMachineData.paginatedAssigned, ...fleetMachineData.paginatedUnassigned].map(p => p.id);
+                      if (visibleIds.every(id => selectedMachineIds.includes(id))) {
+                        setSelectedMachineIds(prev => prev.filter(id => !visibleIds.includes(id)));
                       } else {
-                        setSelectedMachineIds(filteredPlanters.map(p => p.id));
+                        setSelectedMachineIds(prev => Array.from(new Set([...prev, ...visibleIds])));
                       }
                     }}
-                    className="text-xs font-bold text-[#5A5A40]/60 hover:text-[#5A5A40] flex items-center gap-2 transition-colors"
+                    className="text-xs font-bold text-slate-500 hover:text-slate-800 flex items-center gap-2.5 transition-colors group"
                   >
                     <div className={cn(
-                      "w-4 h-4 rounded border flex items-center justify-center transition-colors",
-                      selectedMachineIds.length === filteredPlanters.length ? "bg-[#5A5A40] border-[#5A5A40]" : "border-black/20"
+                      "w-4 h-4 rounded-[4px] border flex items-center justify-center transition-all",
+                      [...fleetMachineData.paginatedAssigned, ...fleetMachineData.paginatedUnassigned].length > 0 && [...fleetMachineData.paginatedAssigned, ...fleetMachineData.paginatedUnassigned].every(p => selectedMachineIds.includes(p.id)) ? "bg-emerald-500 border-emerald-500 shadow-sm" : "border-slate-300 group-hover:border-emerald-500"
                     )}>
-                      {selectedMachineIds.length === filteredPlanters.length && <Check className="w-2 h-2 text-white" />}
-                      {selectedMachineIds.length > 0 && selectedMachineIds.length < filteredPlanters.length && <div className="w-2 h-0.5 bg-[#5A5A40]" />}
+                      {[...fleetMachineData.paginatedAssigned, ...fleetMachineData.paginatedUnassigned].length > 0 && [...fleetMachineData.paginatedAssigned, ...fleetMachineData.paginatedUnassigned].every(p => selectedMachineIds.includes(p.id)) && <Check className="w-3 h-3 text-white" />}
+                      {selectedMachineIds.length > 0 && !([...fleetMachineData.paginatedAssigned, ...fleetMachineData.paginatedUnassigned].every(p => selectedMachineIds.includes(p.id))) && <div className="w-2 h-0.5 bg-emerald-500" />}
                     </div>
-                    {selectedMachineIds.length === filteredPlanters.length ? 'Deselect All' : 'Select All Visible'}
+                    {[...fleetMachineData.paginatedAssigned, ...fleetMachineData.paginatedUnassigned].length > 0 && [...fleetMachineData.paginatedAssigned, ...fleetMachineData.paginatedUnassigned].every(p => selectedMachineIds.includes(p.id)) ? 'Deselect Page' : 'Select Page'}
                   </button>
-                  <span className="text-[10px] text-[#5A5A40]/40 uppercase tracking-widest">
-                    {filteredPlanters.length} Machines Found
+                  <span className="text-[10px] text-slate-400 uppercase tracking-widest font-bold">
+                    {filteredPlanters.length} <span className="font-medium">Machines Total</span>
                   </span>
                 </div>
+                {hasPermission('initialize_fleet') && (
+                  <button
+                    onClick={() => setShowAddMachineModal(true)}
+                    className="flex items-center gap-2 px-5 py-2 bg-emerald-600/10 text-emerald-700 hover:bg-emerald-600 hover:text-white rounded-xl text-xs font-bold transition-colors border border-emerald-500/20 shadow-sm"
+                  >
+                    <Plus className="w-4 h-4" /> Register Machine
+                  </button>
+                )}
               </div>
 
               {selectedMachineIds.length > 0 && (
                 <motion.div
-                  initial={{ y: 100, opacity: 0 }}
-                  animate={{ y: 0, opacity: 1 }}
-                  className="fixed bottom-8 left-1/2 -translate-x-1/2 z-50 bg-[#5A5A40] text-white px-8 py-4 rounded-full shadow-2xl flex items-center gap-6 border border-white/10 backdrop-blur-md"
+                  initial={{ y: 100, opacity: 0, scale: 0.9 }}
+                  animate={{ y: 0, opacity: 1, scale: 1 }}
+                  transition={{ type: "spring", stiffness: 300, damping: 25 }}
+                  className="fixed bottom-8 left-1/2 -translate-x-1/2 z-50 bg-slate-900/95 text-white px-6 py-3.5 rounded-full shadow-2xl flex items-center gap-6 border border-slate-700/50 backdrop-blur-xl"
                 >
-                  <div className="flex items-center gap-2 border-r border-white/20 pr-6">
-                    <span className="text-sm font-bold">{selectedMachineIds.length}</span>
-                    <span className="text-xs opacity-60 uppercase tracking-wider">Selected</span>
+                  <div className="flex items-center gap-2.5 border-r border-slate-700 pr-6">
+                    <div className="w-7 h-7 bg-emerald-500/20 text-emerald-400 rounded-full flex items-center justify-center font-bold text-sm">
+                      {selectedMachineIds.length}
+                    </div>
+                    <span className="text-xs uppercase tracking-wider font-semibold text-slate-300">Selected</span>
                   </div>
                   <div className="flex items-center gap-4">
                     {hasPermission('assign_machines') && (
                       <button
                         onClick={() => setShowTransferModal(true)}
-                        className="flex items-center gap-2 px-4 py-2 bg-white text-[#5A5A40] rounded-full text-xs font-bold hover:bg-white/90 transition-colors"
+                        className="flex items-center gap-2 px-5 py-2 bg-emerald-500 text-white rounded-full text-xs font-bold hover:bg-emerald-400 transition-colors shadow-lg shadow-emerald-500/20"
                       >
                         <ArrowRight className="w-4 h-4" /> Bulk Transfer
                       </button>
                     )}
                     <button
                       onClick={() => setSelectedMachineIds([])}
-                      className="text-xs font-bold opacity-60 hover:opacity-100 transition-opacity"
+                      className="text-xs font-bold text-slate-400 hover:text-white transition-colors"
                     >
                       Cancel
                     </button>
@@ -3943,109 +4245,149 @@ export default function App() {
               )}
 
               {(() => {
-                const adminUids = allUsers.filter(u => u.role === 'admin' || u.role === 'farm_mechanization').map(u => u.uid);
-                const assignedPlanters = sortedPlanters.filter(p => p.currentHolderId && !adminUids.includes(p.currentHolderId));
-                const unassignedPlanters = sortedPlanters.filter(p => !p.currentHolderId || adminUids.includes(p.currentHolderId));
+                const { assignedPlanters, unassignedPlanters, totalAssignedPages, totalUnassignedPages, paginatedAssigned, paginatedUnassigned } = fleetMachineData;
 
-                const MachineCard = ({ planter }: { planter: typeof sortedPlanters[0]; key?: string }) => (
-                  <motion.div
-                    key={planter.id}
-                    className={cn(
-                      "bg-white rounded-[24px] p-6 border transition-all text-left group relative",
-                      selectedMachineIds.includes(planter.id) ? "border-[#5A5A40] ring-2 ring-[#5A5A40]/10" : "border-black/5 hover:shadow-md"
-                    )}
-                  >
-                    <div className="flex justify-between items-start mb-4">
-                      <div className="flex items-center gap-3">
-                        <div
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            setSelectedMachineIds(prev =>
-                              prev.includes(planter.id)
-                                ? prev.filter(id => id !== planter.id)
-                                : [...prev, planter.id]
-                            );
-                          }}
-                          className={cn(
-                            "w-5 h-5 rounded border flex items-center justify-center cursor-pointer transition-colors",
-                            selectedMachineIds.includes(planter.id) ? "bg-[#5A5A40] border-[#5A5A40]" : "border-black/20 hover:border-[#5A5A40]"
-                          )}
-                        >
-                          {selectedMachineIds.includes(planter.id) && <Check className="w-3 h-3 text-white" />}
-                        </div>
-                        <div
-                          onClick={() => openPlanterDetails(planter)}
-                          className="w-10 h-10 bg-[#F5F5F0] rounded-xl flex items-center justify-center group-hover:bg-[#5A5A40]/10 transition-colors cursor-pointer"
-                        >
-                          <Tractor className="w-5 h-5 text-[#5A5A40]" />
-                        </div>
-                      </div>
-                      <span className={cn(
-                        "text-[10px] uppercase font-bold px-2 py-1 rounded-md",
-                        planter.operatingStatus === 'operating' ? "bg-green-100 text-green-700" :
-                          planter.operatingStatus === 'maintenance' ? "bg-orange-100 text-orange-700" :
-                            "bg-gray-100 text-gray-700"
-                      )}>
-                        {planter.operatingStatus}
-                      </span>
-                    </div>
+                const containerVariants = {
+                  hidden: { opacity: 0 },
+                  show: {
+                    opacity: 1,
+                    transition: { staggerChildren: 0.05 }
+                  }
+                };
 
-                    <div onClick={() => openPlanterDetails(planter)} className="cursor-pointer">
-                      <h3 className="text-xl font-serif mb-1">{planter.id}</h3>
-                      <div className="space-y-1 mb-4">
-                        <p className="text-xs text-[#5A5A40]/60 flex items-center gap-1">
-                          <UserIcon className="w-3 h-3" /> {allUsers.find(u => u.uid === planter.currentHolderId)?.displayName || 'Unassigned'}
-                        </p>
-                        <p className="text-[10px] text-[#5A5A40]/40 flex items-center gap-1">
-                          <MapPin className="w-3 h-3" /> {planter.mandal || '—'}, {planter.district || '—'}
-                        </p>
-                      </div>
-                      <div className="grid grid-cols-2 gap-4 pt-4 border-t border-black/5">
-                        <div>
-                          <p className="text-[10px] uppercase text-[#5A5A40]/40 font-bold">Reading</p>
-                          <p className="text-sm font-mono font-medium">{planter.lastReading.toLocaleString()}</p>
+                const itemVariants = {
+                  hidden: { opacity: 0, scale: 0.95, y: 20 },
+                  show: { opacity: 1, scale: 1, y: 0, transition: { type: 'spring', stiffness: 300, damping: 24 } }
+                };
+
+                const MachineCard = ({ planter }: { planter: typeof sortedPlanters[0]; key?: string }) => {
+                  const isOperating = planter.operatingStatus === 'operating';
+                  const isMaintenance = planter.operatingStatus === 'maintenance';
+                  return (
+                    <motion.div
+                      variants={itemVariants}
+                      key={planter.id}
+                      className={cn(
+                        "bg-white rounded-[24px] p-6 border transition-all text-left group relative hover:-translate-y-1 hover:shadow-xl duration-300",
+                        selectedMachineIds.includes(planter.id) ? "border-emerald-500 ring-4 ring-emerald-500/20" : "border-slate-200 hover:border-emerald-500/30"
+                      )}
+                    >
+                      <div className="flex justify-between items-start mb-5">
+                        <div className="flex items-center gap-3">
+                          <div
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setSelectedMachineIds(prev =>
+                                prev.includes(planter.id)
+                                  ? prev.filter(id => id !== planter.id)
+                                  : [...prev, planter.id]
+                              );
+                            }}
+                            className={cn(
+                              "w-5 h-5 rounded border flex items-center justify-center cursor-pointer transition-colors shadow-sm",
+                              selectedMachineIds.includes(planter.id) ? "bg-emerald-500 border-emerald-500" : "bg-[#F5F5F0] border-slate-300 hover:border-emerald-500 hover:bg-emerald-50"
+                            )}
+                          >
+                            {selectedMachineIds.includes(planter.id) && <Check className="w-3 h-3 text-white" />}
+                          </div>
+                          <div
+                            onClick={() => openPlanterDetails(planter)}
+                            className={cn(
+                              "w-12 h-12 rounded-2xl flex items-center justify-center transition-colors cursor-pointer shadow-sm relative overflow-hidden",
+                              isOperating ? "bg-emerald-50 text-emerald-600" : isMaintenance ? "bg-orange-50 text-orange-600" : "bg-slate-50 text-slate-500"
+                            )}
+                          >
+                            <Tractor className="w-6 h-6 relative z-10" />
+                          </div>
                         </div>
-                        <div>
-                          <p className="text-[10px] uppercase text-[#5A5A40]/40 font-bold">Area</p>
-                          <p className="text-sm font-mono font-medium">{calcArea(planter.lastReading).toFixed(1)} acres</p>
+                        <span className={cn(
+                          "relative text-[9px] uppercase font-bold px-2.5 py-1 rounded-full tracking-wider flex items-center gap-1.5",
+                          isOperating ? "bg-emerald-100 text-emerald-800" :
+                            isMaintenance ? "bg-orange-100 text-orange-800" :
+                              "bg-gray-100 text-gray-800"
+                        )}>
+                          <div className={cn(
+                            "w-1.5 h-1.5 rounded-full",
+                            isOperating ? "bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.8)]" :
+                            isMaintenance ? "bg-orange-500 shadow-[0_0_8px_rgba(249,115,22,0.8)]" : "bg-slate-400"
+                          )}/>
+                          {planter.operatingStatus}
+                        </span>
+                      </div>
+
+                      <div onClick={() => openPlanterDetails(planter)} className="cursor-pointer">
+                        <h3 className="text-2xl font-serif text-slate-800 mb-1.5 truncate group-hover:text-emerald-700 transition-colors">{planter.id}</h3>
+                        <div className="space-y-1.5 mb-5">
+                          <p className="text-xs text-slate-500 flex items-center gap-2 font-medium">
+                            <UserIcon className="w-3.5 h-3.5 opacity-70" /> {allUsers.find(u => u.uid === planter.currentHolderId)?.displayName || 'Unassigned'}
+                          </p>
+                          <p className="text-[10px] text-slate-400 flex items-center gap-2 uppercase tracking-wide">
+                            <MapPin className="w-3.5 h-3.5 opacity-70" /> {[planter.mandal, planter.district].filter(Boolean).join(', ') || '—'}
+                          </p>
+                        </div>
+                        <div className="grid grid-cols-2 gap-4 pt-4 border-t border-slate-100/80">
+                          <div>
+                            <p className="text-[9px] uppercase text-slate-400 font-bold tracking-widest mb-1">Reading</p>
+                            <p className="text-sm font-mono font-bold text-slate-700">{planter.lastReading.toLocaleString()}</p>
+                          </div>
+                          <div>
+                            <p className="text-[9px] uppercase text-slate-400 font-bold tracking-widest mb-1">Area</p>
+                            <p className="text-sm font-mono font-bold text-emerald-600">{calcArea(planter.lastReading).toFixed(1)} <span className="text-[10px] text-slate-400 font-sans tracking-normal">acres</span></p>
+                          </div>
                         </div>
                       </div>
-                    </div>
-                  </motion.div>
-                );
+                    </motion.div>
+                  );
+                };
 
                 return (
                   <div className="space-y-8">
                     {/* Assigned Section */}
                     <div>
-                      <div className="flex items-center gap-3 mb-4">
-                        <div className="w-2 h-2 rounded-full bg-emerald-500" />
-                        <h3 className="text-sm font-bold uppercase tracking-widest text-[#5A5A40]">Assigned</h3>
-                        <span className="text-[10px] font-bold bg-emerald-100 text-emerald-700 px-2.5 py-0.5 rounded-full">{assignedPlanters.length}</span>
+                      <div className="flex items-center gap-3 mb-6 pb-2 border-b border-slate-100">
+                        <div className="w-2 h-2 rounded-full bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.8)]" />
+                        <h3 className="text-base font-bold tracking-wide text-slate-800">Allocated Fleet</h3>
+                        <span className="text-[10px] font-bold bg-emerald-100 text-emerald-800 px-2.5 py-0.5 rounded-full shadow-sm">{assignedPlanters.length}</span>
                       </div>
                       {assignedPlanters.length === 0 ? (
                         <div className="bg-white rounded-[20px] border border-dashed border-black/10 p-8 text-center">
                           <p className="text-sm text-[#5A5A40]/40 italic">No machines assigned yet. Transfer machines to users to see them here.</p>
                         </div>
                       ) : (
-                        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-                          {assignedPlanters.map(planter => <MachineCard key={planter.id} planter={planter} />)}
-                        </div>
+                        <>
+                          <motion.div variants={containerVariants} initial="hidden" animate="show" className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
+                            {paginatedAssigned.map(planter => <MachineCard key={planter.id} planter={planter} />)}
+                          </motion.div>
+                          {totalAssignedPages > 1 && (
+                            <div className="flex justify-between items-center mt-6 p-3 bg-white rounded-2xl border border-slate-100 shadow-sm col-span-full">
+                              <button disabled={assignedPage === 1} onClick={() => setAssignedPage(p => Math.max(1, p - 1))} className="px-4 py-2 font-bold text-sm text-slate-500 hover:text-emerald-600 disabled:opacity-30 disabled:hover:text-slate-500 flex items-center gap-2 transition-colors">
+                                <ChevronRight className="w-4 h-4 rotate-180" /> Prev
+                              </button>
+                              <span className="text-[10px] uppercase tracking-widest font-bold text-slate-400">Page {assignedPage} of {totalAssignedPages}</span>
+                              <button disabled={assignedPage === totalAssignedPages} onClick={() => setAssignedPage(p => Math.min(totalAssignedPages, p + 1))} className="px-4 py-2 font-bold text-sm text-slate-500 hover:text-emerald-600 disabled:opacity-30 disabled:hover:text-slate-500 flex items-center gap-2 transition-colors">
+                                Next <ChevronRight className="w-4 h-4" />
+                              </button>
+                            </div>
+                          )}
+                        </>
                       )}
                     </div>
 
                     {/* Unassigned Section */}
                     <div>
-                      <div className="flex items-center gap-3 mb-4">
+                      <div className="flex items-center gap-3 mb-6 pb-2 border-b border-slate-100">
                         <div className="w-2 h-2 rounded-full bg-slate-400" />
-                        <h3 className="text-sm font-bold uppercase tracking-widest text-[#5A5A40]">Unassigned</h3>
-                        <span className="text-[10px] font-bold bg-slate-100 text-slate-600 px-2.5 py-0.5 rounded-full">{unassignedPlanters.length}</span>
+                        <h3 className="text-base font-bold tracking-wide text-slate-800">Available / Unassigned</h3>
+                        <span className="text-[10px] font-bold bg-slate-100 text-slate-600 px-2.5 py-0.5 rounded-full shadow-sm">{unassignedPlanters.length}</span>
                         {unassignedPlanters.length > 0 && hasPermission('assign_machines') && (
                           <button
-                            onClick={() => { setSelectedMachineIds(unassignedPlanters.map(p => p.id)); }}
-                            className="ml-auto text-[10px] font-bold text-[#5A5A40]/50 hover:text-[#5A5A40] transition-colors underline underline-offset-2"
+                            onClick={() => {
+                              const ids = paginatedUnassigned.map(p => p.id);
+                              setSelectedMachineIds(prev => Array.from(new Set([...prev, ...ids])));
+                            }}
+                            className="ml-auto text-xs font-bold text-emerald-600 hover:text-emerald-700 transition-colors uppercase tracking-wider bg-emerald-50 px-3 py-1.5 rounded-lg hover:bg-emerald-100"
                           >
-                            Select All Unassigned
+                            Select Page
                           </button>
                         )}
                       </div>
@@ -4054,9 +4396,22 @@ export default function App() {
                           <p className="text-sm text-[#5A5A40]/40 italic">All machines are assigned.</p>
                         </div>
                       ) : (
-                        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-                          {unassignedPlanters.map(planter => <MachineCard key={planter.id} planter={planter} />)}
-                        </div>
+                        <>
+                          <motion.div variants={containerVariants} initial="hidden" animate="show" className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
+                            {paginatedUnassigned.map(planter => <MachineCard key={planter.id} planter={planter} />)}
+                          </motion.div>
+                          {totalUnassignedPages > 1 && (
+                            <div className="flex justify-between items-center mt-6 p-3 bg-white rounded-2xl border border-slate-100 shadow-sm col-span-full">
+                              <button disabled={unassignedPage === 1} onClick={() => setUnassignedPage(p => Math.max(1, p - 1))} className="px-4 py-2 font-bold text-sm text-slate-500 hover:text-emerald-600 disabled:opacity-30 disabled:hover:text-slate-500 flex items-center gap-2 transition-colors">
+                                <ChevronRight className="w-4 h-4 rotate-180" /> Prev
+                              </button>
+                              <span className="text-[10px] uppercase tracking-widest font-bold text-slate-400">Page {unassignedPage} of {totalUnassignedPages}</span>
+                              <button disabled={unassignedPage === totalUnassignedPages} onClick={() => setUnassignedPage(p => Math.min(totalUnassignedPages, p + 1))} className="px-4 py-2 font-bold text-sm text-slate-500 hover:text-emerald-600 disabled:opacity-30 disabled:hover:text-slate-500 flex items-center gap-2 transition-colors">
+                                Next <ChevronRight className="w-4 h-4" />
+                              </button>
+                            </div>
+                          )}
+                        </>
                       )}
                     </div>
                   </div>
@@ -4461,13 +4816,86 @@ function MachineDetailsForm({ planter, onSuccess, createNotification }: { plante
   const [problem, setProblem] = useState(planter.problemDescription || '');
   const [notes, setNotes] = useState(planter.maintenanceNotes || '');
   const [coords, setCoords] = useState({ lat: planter.lat, lng: planter.lng });
+  const [latInput, setLatInput] = useState(planter.lat?.toString() || '');
+  const [lngInput, setLngInput] = useState(planter.lng?.toString() || '');
   const [isSaving, setIsSaving] = useState(false);
   const [isLocating, setIsLocating] = useState(false);
+  const [geocodingLoading, setGeocodingLoading] = useState(false);
+
+  const fetchAddressFromCoords = async (lat: string, lng: string) => {
+    if (!lat || !lng) return;
+    setGeocodingLoading(true);
+    try {
+      const response = await fetch(`https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lng}&zoom=18&addressdetails=1&accept-language=en`);
+      const data = await response.json();
+      if (data && data.address) {
+        const addr = data.address;
+        // Robust mapping for Indian regions
+        const villageVal = addr.village || addr.hamlet || addr.neighbourhood || addr.suburb || addr.town || addr.city || '';
+        const mandalVal = addr.subdistrict || addr.township || addr.suburb || addr.town || addr.city_district || addr.neighbourhood || '';
+        const districtVal = addr.state_district || addr.county || addr.district || addr.city_district || addr.city || '';
+        const stateVal = addr.state || addr.region || '';
+
+        if (villageVal) setLocation(villageVal);
+        if (mandalVal) setMandal(mandalVal);
+        if (districtVal) setDistrict(districtVal);
+        if (stateVal) setState(stateVal);
+      }
+    } catch (err) {
+      console.error('Failed to fetch address details:', err);
+    } finally {
+      setGeocodingLoading(false);
+    }
+  };
+
+  // Auto-fill address when lat/lng inputs are updated (1s debounce)
+  useEffect(() => {
+    const l1 = parseFloat(latInput);
+    const l2 = parseFloat(lngInput);
+    if (!isNaN(l1) && !isNaN(l2) && l1 !== 0 && l2 !== 0) {
+      const timer = setTimeout(() => {
+        fetchAddressFromCoords(latInput, lngInput);
+      }, 1000);
+      return () => clearTimeout(timer);
+    }
+  }, [latInput, lngInput]);
+
+  useEffect(() => {
+    setLocation(planter.location);
+    setMandal(planter.mandal || '');
+    setDistrict(planter.district || '');
+    setState(planter.state || '');
+    setStatus(planter.operatingStatus);
+    setProblem(planter.problemDescription || '');
+    setNotes(planter.maintenanceNotes || '');
+    setCoords({ lat: planter.lat, lng: planter.lng });
+    setLatInput(planter.lat?.toString() || '');
+    setLngInput(planter.lng?.toString() || '');
+  }, [planter]);
 
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsSaving(true);
     try {
+      const parsedLat = latInput.trim() === '' ? null : Number(latInput);
+      const parsedLng = lngInput.trim() === '' ? null : Number(lngInput);
+
+      if ((parsedLat !== null && Number.isNaN(parsedLat)) || (parsedLng !== null && Number.isNaN(parsedLng))) {
+        throw new Error('Invalid coordinates');
+      }
+
+      if ((parsedLat === null) !== (parsedLng === null)) {
+        throw new Error('Both latitude and longitude are required');
+      }
+
+      if (parsedLat !== null && (parsedLat < -90 || parsedLat > 90)) {
+        throw new Error('Latitude out of range');
+      }
+
+      if (parsedLng !== null && (parsedLng < -180 || parsedLng > 180)) {
+        throw new Error('Longitude out of range');
+      }
+
       await updateDoc(doc(db, 'planters', planter.id), {
         location,
         mandal,
@@ -4476,15 +4904,21 @@ function MachineDetailsForm({ planter, onSuccess, createNotification }: { plante
         operatingStatus: status,
         problemDescription: status === 'maintenance' ? problem : '',
         maintenanceNotes: status === 'maintenance' ? notes : '',
-        lat: coords.lat || null,
-        lng: coords.lng || null,
+        lat: parsedLat,
+        lng: parsedLng,
         lastUpdated: new Date().toISOString()
       });
       void syncFirestoreDocument('planters', planter.id);
 
+      setCoords({
+        lat: parsedLat ?? undefined,
+        lng: parsedLng ?? undefined
+      });
+
       onSuccess();
     } catch (err) {
       console.error('Failed to update details:', err);
+      alert(err instanceof Error ? err.message : 'Failed to update machine details. Please check the coordinates and try again.');
     } finally {
       setIsSaving(false);
     }
@@ -4495,29 +4929,13 @@ function MachineDetailsForm({ planter, onSuccess, createNotification }: { plante
     navigator.geolocation.getCurrentPosition(
       async (pos) => {
         const { latitude, longitude } = pos.coords;
+        const latStr = latitude.toFixed(6);
+        const lngStr = longitude.toFixed(6);
         setCoords({ lat: latitude, lng: longitude });
-
-        try {
-          const response = await fetch(`https://nominatim.openstreetmap.org/reverse?format=json&lat=${latitude}&lon=${longitude}&zoom=18&addressdetails=1`);
-          const data = await response.json();
-
-          if (data && data.address) {
-            const addr = data.address;
-            const village = addr.village || addr.suburb || addr.neighbourhood || addr.city || addr.town || addr.hamlet || '';
-            const mandalVal = addr.county || addr.mandal || addr.tehsil || addr.subdistrict || '';
-            const districtVal = addr.district || addr.city_district || addr.state_district || addr.city || '';
-            const stateVal = addr.state || '';
-
-            if (village) setLocation(village);
-            if (mandalVal) setMandal(mandalVal);
-            if (districtVal) setDistrict(districtVal);
-            if (stateVal) setState(stateVal);
-          }
-        } catch (err) {
-          console.error('Failed to fetch address details:', err);
-        } finally {
-          setIsLocating(false);
-        }
+        setLatInput(latStr);
+        setLngInput(lngStr);
+        await fetchAddressFromCoords(latStr, lngStr);
+        setIsLocating(false);
       },
       (err) => {
         console.error(err);
@@ -4545,28 +4963,37 @@ function MachineDetailsForm({ planter, onSuccess, createNotification }: { plante
       </div>
 
       <div className="space-y-2 bg-white/50 p-4 rounded-2xl border border-black/5">
-        <label className="text-[10px] font-bold text-[#5A5A40]/40 uppercase mb-3 block">Location Details (Auto-filled from GPS)</label>
+        <label className="text-[10px] font-bold text-[#5A5A40]/40 uppercase mb-3 block">Location Details (GPS Or Manual)</label>
         <div className="grid grid-cols-2 gap-4">
           <div className="col-span-2">
-            <label className="text-[8px] font-bold text-[#5A5A40]/40 uppercase mb-1 block">Village / Location</label>
-            <div className="flex gap-2">
-              <input
-                type="text"
-                value={location}
-                onChange={(e) => setLocation(e.target.value)}
-                className="flex-1 bg-[#F5F5F0] rounded-xl border-none text-sm p-2"
-                placeholder="Village name..."
-              />
+            <div className="flex flex-wrap items-center gap-2 mb-3">
               <button
                 type="button"
                 onClick={captureLocation}
                 disabled={isLocating}
-                className="px-4 bg-[#5A5A40] text-white rounded-xl flex items-center justify-center hover:bg-[#4A4A30] transition-colors disabled:opacity-50 gap-2 text-xs font-bold"
+                className="px-3 py-1.5 bg-emerald-600 text-white rounded-xl text-[10px] font-bold uppercase transition-all hover:bg-emerald-700 flex items-center gap-2 shadow-sm disabled:opacity-50"
               >
-                {isLocating ? <Loader2 className="w-4 h-4 animate-spin" /> : <Crosshair className="w-4 h-4" />}
-                {isLocating ? "Locating..." : "Capture GPS"}
+                {isLocating ? <Loader2 className="w-3 h-3 animate-spin" /> : <MapPin className="w-3 h-3" />}
+                {isLocating ? 'Locating...' : 'Capture Details'}
+              </button>
+              <button
+                type="button"
+                onClick={() => fetchAddressFromCoords(latInput, lngInput)}
+                disabled={geocodingLoading || !latInput || !lngInput}
+                className="px-3 py-1.5 bg-white border border-slate-200 text-slate-600 rounded-xl text-[10px] font-bold uppercase transition-all hover:bg-slate-50 flex items-center gap-2 shadow-sm disabled:opacity-50"
+              >
+                {geocodingLoading ? <Loader2 className="w-3 h-3 animate-spin" /> : <Network className="w-3 h-3" />}
+                Sync From Coords
               </button>
             </div>
+            <label className="text-[8px] font-bold text-[#5A5A40]/40 uppercase mb-1 block">Village / Location</label>
+            <input
+              type="text"
+              value={location}
+              onChange={(e) => setLocation(e.target.value)}
+              className="w-full bg-[#F5F5F0] rounded-xl border-none text-sm p-2"
+              placeholder="Village / Location..."
+            />
           </div>
           <div>
             <label className="text-[8px] font-bold text-[#5A5A40]/40 uppercase mb-1 block">Mandal</label>
@@ -4598,12 +5025,63 @@ function MachineDetailsForm({ planter, onSuccess, createNotification }: { plante
               placeholder="State name..."
             />
           </div>
+          <div>
+            <label className="text-[8px] font-bold text-[#5A5A40]/40 uppercase mb-1 block">Latitude</label>
+            <input
+              type="number"
+              step="0.000001"
+              value={latInput}
+              onChange={(e) => {
+                setLatInput(e.target.value);
+                setCoords(prev => ({
+                  ...prev,
+                  lat: e.target.value.trim() === '' ? undefined : Number(e.target.value)
+                }));
+              }}
+              className="w-full bg-[#F5F5F0] rounded-xl border-none text-sm p-2"
+              placeholder="e.g. 17.385044"
+            />
+          </div>
+          <div>
+            <label className="text-[8px] font-bold text-[#5A5A40]/40 uppercase mb-1 block">Longitude</label>
+            <input
+              type="number"
+              step="0.000001"
+              value={lngInput}
+              onChange={(e) => {
+                setLngInput(e.target.value);
+                setCoords(prev => ({
+                  ...prev,
+                  lng: e.target.value.trim() === '' ? undefined : Number(e.target.value)
+                }));
+              }}
+              className="w-full bg-[#F5F5F0] rounded-xl border-none text-sm p-2"
+              placeholder="e.g. 78.486671"
+            />
+          </div>
         </div>
-        {coords.lat && (
+        <div className="flex items-center justify-between gap-3">
+          {coords.lat !== undefined && coords.lng !== undefined ? (
           <p className="text-[10px] text-[#5A5A40]/40 font-mono mt-2">
-            GPS Coordinates: {coords.lat.toFixed(6)}, {coords.lng?.toFixed(6)}
+            Coordinates: {coords.lat.toFixed(6)}, {coords.lng.toFixed(6)}
           </p>
-        )}
+          ) : (
+            <p className="text-[10px] text-[#5A5A40]/40 font-mono mt-2">
+              Enter latitude and longitude manually, or use Capture GPS.
+            </p>
+          )}
+          <button
+            type="button"
+            onClick={() => {
+              setCoords({ lat: undefined, lng: undefined });
+              setLatInput('');
+              setLngInput('');
+            }}
+            className="text-[10px] font-bold uppercase tracking-wider text-[#5A5A40]/50 hover:text-[#5A5A40] transition-colors"
+          >
+            Clear Coords
+          </button>
+        </div>
       </div>
 
       {status === 'maintenance' && (
@@ -5295,7 +5773,7 @@ function MapView({ planters, onSelect, allUsers }: { planters: Planter[], onSele
         attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
         url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
       />
-      {planters.filter(p => p.lat && p.lng).map(planter => (
+      {planters.filter(planter => planter.lat !== undefined && planter.lat !== null && planter.lng !== undefined && planter.lng !== null).map(planter => (
         <Marker
           key={planter.id}
           position={[planter.lat!, planter.lng!]}
