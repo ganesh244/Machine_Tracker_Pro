@@ -1,8 +1,56 @@
 rules_version = '2';
+
 service cloud.firestore {
   match /databases/{database}/documents {
-    match /{document=**} {
+    // Important:
+    // This app currently uses a custom email/localStorage login flow instead of Firebase Auth.
+    // That means Firestore cannot identify the real user in security rules yet.
+    // These rules add guardrails by limiting access to known collections, but they are not
+    // true identity-based security. For full production security, migrate the app to Firebase Auth
+    // or move Firestore writes behind a trusted backend.
+
+    match /users/{userId} {
       allow read, write: if true;
+    }
+
+    match /planters/{planterId} {
+      allow read, write: if true;
+    }
+
+    match /updates/{updateId} {
+      allow read, write: if true;
+    }
+
+    match /maintenance_requests/{requestId} {
+      allow read, write: if true;
+    }
+
+    match /maintenance_logs/{logId} {
+      allow read, write: if true;
+    }
+
+    match /assignments/{assignmentId} {
+      allow read, write: if true;
+    }
+
+    match /notifications/{notificationId} {
+      allow read, write: if true;
+    }
+
+    match /messages/{messageId} {
+      allow read, write: if true;
+    }
+
+    match /role_permissions/{roleId} {
+      allow read, write: if true;
+    }
+
+    match /settings/{settingId} {
+      allow read, write: if true;
+    }
+
+    match /{document=**} {
+      allow read, write: if false;
     }
   }
 }

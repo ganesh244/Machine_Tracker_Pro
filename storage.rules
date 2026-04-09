@@ -1,0 +1,11 @@
+rules_version = '2';
+
+service firebase.storage {
+  match /b/{bucket}/o {
+    // Media uploads are handled by the Google Drive sync server in this app.
+    // Keep Firebase Storage closed by default to avoid accidental usage/cost.
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+  }
+}

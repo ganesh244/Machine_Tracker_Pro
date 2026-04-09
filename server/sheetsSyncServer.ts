@@ -4,6 +4,10 @@ import path from 'node:path';
 import { Readable } from 'node:stream';
 import { google, sheets_v4 } from 'googleapis';
 import multer from 'multer';
+import dotenv from 'dotenv';
+
+dotenv.config({ path: path.resolve(process.cwd(), '.env.local') });
+dotenv.config({ path: path.resolve(process.cwd(), '.env') });
 
 type SyncPayload = {
   collection: string;
@@ -12,6 +16,21 @@ type SyncPayload = {
 };
 
 const app = express();
+
+// Minimal CORS so the local Vite app (often on :3000/:3001) can call this server on :8787.
+app.use((req, res, next) => {
+  const origin = req.headers.origin as string | undefined;
+  res.setHeader('Access-Control-Allow-Origin', origin || '*');
+  res.setHeader('Vary', 'Origin');
+  res.setHeader('Access-Control-Allow-Methods', 'GET,POST,OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+  if (req.method === 'OPTIONS') {
+    res.status(204).end();
+    return;
+  }
+  next();
+});
+
 app.use(express.json({ limit: '2mb' }));
 const upload = multer({ storage: multer.memoryStorage() });
 
@@ -35,6 +54,16 @@ const saveState = (state: { spreadsheetId?: string }) => {
 const state = loadState();
 
 const getAuthClient = () => {
+  const serviceAccountJsonPath = process.env.GOOGLE_SERVICE_ACCOUNT_JSON_PATH;
+  if (serviceAccountJsonPath) {
+    const fileContents = fs.readFileSync(path.resolve(process.cwd(), serviceAccountJsonPath), 'utf8');
+    const credentials = JSON.parse(fileContents);
+    return new google.auth.GoogleAuth({
+      credentials,
+      scopes: ['https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapis.com/auth/drive.file']
+    });
+  }
+
   const serviceAccountJson = process.env.GOOGLE_SERVICE_ACCOUNT_JSON;
 
   if (serviceAccountJson) {
@@ -395,7 +424,9 @@ app.get('/api/sheets/info', async (_req, res) => {
       spreadsheetUrl: getSpreadsheetUrl(spreadsheetId)
     });
   } catch (error) {
-    return res.status(500).json({
+    // Return 200 so the frontend can show a friendly "offline/unconfigured" state
+    // instead of throwing (and so we avoid confusing CORS + ERR_FAILED output).
+    return res.status(200).json({
       ok: false,
       error: error instanceof Error ? error.message : 'Unknown error'
     });

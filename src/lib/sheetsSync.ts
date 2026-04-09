@@ -1,27 +1,50 @@
-const getSheetsSyncBaseUrl = () => {
-  const env = (import.meta as ImportMeta & { env?: Record<string, string | undefined> }).env;
-  const configured = env?.VITE_SHEETS_SYNC_URL?.trim();
-  if (configured) return configured.replace(/\/$/, '');
+let sheetsSyncUnavailableUntil = 0;
+let hasWarnedSheetsSyncOffline = false;
 
-  if (typeof window !== 'undefined' && (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1')) {
-    return 'http://localhost:8787';
+const getSheetsSyncBaseUrl = (): string | undefined => {
+  const env = (import.meta as ImportMeta & { env?: Record<string, string | undefined> }).env;
+  
+  // In production, if served from the same origin, we use relative paths.
+  // If VITE_SHEETS_SYNC_URL is explicitly set (e.g. for cross-origin), we use that.
+  if (env?.VITE_SHEETS_SYNC_URL) {
+    return env.VITE_SHEETS_SYNC_URL.replace(/\/$/, '');
   }
 
-  return typeof window !== 'undefined' ? window.location.origin : '';
+  // Fallback for local development or same-origin production
+  if (env?.DEV) {
+    return 'http://localhost:8787';
+  }
+  
+  // Default to same origin in production
+  return '';
+};
+
+const shouldSkipSheetsRequest = () => false; // Disabled skip logic for debugging
+
+const markSheetsSyncUnavailable = (error: unknown) => {
+  console.warn('Sheets sync error detected:', error);
+};
+
+const markSheetsSyncAvailable = () => {
+  hasWarnedSheetsSyncOffline = false;
 };
 
 const postToSheets = async (path: string, payload: Record<string, unknown>) => {
   const baseUrl = getSheetsSyncBaseUrl();
-  if (baseUrl === undefined) return;
+  if (!baseUrl) return;
 
   try {
-    await fetch(`${baseUrl}${path}`, {
+    const response = await fetch(`${baseUrl}${path}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload)
     });
+    if (!response.ok) {
+      throw new Error(`Sheets sync returned ${response.status}`);
+    }
+    markSheetsSyncAvailable();
   } catch (error) {
-    console.warn('Google Sheets sync request failed:', error);
+    markSheetsSyncUnavailable(error);
   }
 };
 
@@ -33,17 +56,25 @@ export const deleteSheetDocument = async (collection: string, documentId: string
   await postToSheets('/api/sheets/delete', { collection, documentId });
 };
 
-export const getSheetInfo = async () => {
+export const getSheetInfo = async (): Promise<any> => {
   const baseUrl = getSheetsSyncBaseUrl();
-  if (baseUrl === undefined) return null;
+  console.log('getSheetInfo: fetching from', `${baseUrl}/api/sheets/info`);
 
   try {
     const response = await fetch(`${baseUrl}/api/sheets/info`);
-    if (!response.ok) return null;
-    return await response.json();
-  } catch (error) {
-    console.warn('Failed to fetch Google Sheets info:', error);
-    return null;
+    if (!response.ok) {
+      const errorText = await response.text().catch(() => response.statusText);
+      console.error('getSheetInfo: server error', response.status, errorText);
+      return { ok: false, error: `Mirroring server error: ${response.status} ${errorText}` };
+    }
+    markSheetsSyncAvailable();
+    const data = await response.json();
+    console.log('getSheetInfo: success', data);
+    return data;
+  } catch (error: any) {
+    console.error('getSheetInfo: unreachable', error);
+    markSheetsSyncUnavailable(error);
+    return { ok: false, error: `Mirroring server unreachable: ${error.message || 'Network error'}.` };
   }
 };
 
@@ -57,7 +88,7 @@ export const uploadDriveFile = async ({
   bucket: 'gallery' | 'proofs';
 }) => {
   const baseUrl = getSheetsSyncBaseUrl();
-  if (baseUrl === undefined) return null;
+  if (!baseUrl) return null;
 
   const formData = new FormData();
   formData.append('file', file);
@@ -76,10 +107,13 @@ export const uploadDriveFile = async ({
       signal: controller.signal
     });
 
-    if (!response.ok) return null;
+    if (!response.ok) {
+      throw new Error(`Drive upload returned ${response.status}`);
+    }
+    markSheetsSyncAvailable();
     return await response.json();
   } catch (error) {
-    console.warn('Failed to upload file to Google Drive:', error);
+    markSheetsSyncUnavailable(error);
     return null;
   } finally {
     clearTimeout(timeoutId);

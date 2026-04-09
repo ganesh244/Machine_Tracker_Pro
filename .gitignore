@@ -6,3 +6,8 @@ coverage/
 *.log
 .env*
 !.env.example
+service-account*.json
+.sheets-sync.json
+*.local
+.vscode/
+.idea/
