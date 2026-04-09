@@ -7,7 +7,7 @@ services:
     startCommand: npm run start
     envVars:
       - key: NODE_VERSION
-        value: 18.17.0
+        value: 20
       - key: PORT
         value: 10000
       - key: VITE_SHEETS_SYNC_URL
