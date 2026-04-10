@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import {
     collection,
     onSnapshot,
@@ -13,8 +13,10 @@ import {
     getDocs,
     getDoc,
     arrayUnion,
-    deleteDoc
+    deleteDoc,
+    increment
 } from 'firebase/firestore';
+import { onAuthStateChanged } from 'firebase/auth';
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 
 import { motion, AnimatePresence } from 'motion/react';
@@ -24,7 +26,11 @@ import {
     Cell,
     ResponsiveContainer,
     Tooltip,
-    Legend
+    Legend,
+    BarChart,
+    Bar,
+    XAxis,
+    YAxis
 } from 'recharts';
 import {
     Tractor,
@@ -65,7 +71,9 @@ import {
     Check,
     Clock,
     MessageSquare,
-    Network
+    Network,
+    UserPlus,
+    Shield
 } from 'lucide-react';
 import { MapContainer, TileLayer, Marker, Popup, useMap } from 'react-leaflet';
 import L from 'leaflet';
@@ -83,7 +91,7 @@ let DefaultIcon = L.icon({
 
 L.Marker.prototype.options.icon = DefaultIcon;
 import { format } from 'date-fns';
-import { db, storage } from './firebase';
+import { db, auth, storage } from './firebase';
 import { Planter, ReadingUpdate, MaintenanceLog, MaintenanceRequest, AppNotification, calculateArea, UserProfile, UserRole, Assignment, Permission, Message } from './types';
 import { cn } from './lib/utils';
 import { deleteSheetDocument, getSheetInfo, syncSheetDocument, uploadDriveFile } from './lib/sheetsSync';
@@ -225,6 +233,11 @@ const MachineHierarchyMap = ({ planter, assignments, allUsers }: { planter: Plan
             </div>
         </div>
     );
+};
+
+const getSuggestedParentId = (_role: UserRole, _uid: string, currentParentId?: string) => {
+    if (currentParentId) return currentParentId;
+    return '';
 };
 
 const countMachines = (uid: string, users: UserProfile[], planters: Planter[]): number => {
@@ -941,13 +954,20 @@ export default function App() {
     const [selectedChatUserId, setSelectedChatUserId] = useState<string | null>(null);
     const [chatMessageText, setChatMessageText] = useState('');
     const [loading, setLoading] = useState(true);
+    const [mirroringStatus, setMirroringStatus] = useState({
+        isHealthy: false,
+        lastChecked: null as string | null,
+        error: null as string | null,
+        isSyncing: false
+    });
+
     const [searchTerm, setSearchTerm] = useState('');
     const [filterMandal, setFilterMandal] = useState('All');
     const [filterDistrict, setFilterDistrict] = useState('All');
     const [filterFacilitator, setFilterFacilitator] = useState('All');
     const [showRequestForm, setShowRequestForm] = useState(false);
     const [showTransferModal, setShowTransferModal] = useState(false);
-    const [activeTab, setActiveTab] = useState<'fleet' | 'reports' | 'map' | 'dashboard' | 'assignments' | 'settings' | 'hierarchy' | 'messages'>('dashboard');
+    const [activeTab, setActiveTab] = useState<'fleet' | 'reports' | 'map' | 'dashboard' | 'assignments' | 'settings' | 'hierarchy' | 'messages' | 'updates' | 'analytics'>('dashboard');
     const [reportPeriod, setReportPeriod] = useState<'daily' | 'weekly' | 'monthly'>('daily');
     const [allUsers, setAllUsers] = useState<UserProfile[]>([]);
     const [selectedMachineIds, setSelectedMachineIds] = useState<string[]>([]);
@@ -960,7 +980,121 @@ export default function App() {
     const [addMachineLoading, setAddMachineLoading] = useState(false);
     const [geocodingLoading, setGeocodingLoading] = useState(false);
 
+    useEffect(() => {
+        const unsub = onAuthStateChanged(auth, (u) => {
+            setUser(u);
+            if (u) {
+                // Load profile
+                getDoc(doc(db, 'users', u.uid)).then(snap => {
+                    if (snap.exists()) {
+                        setUserProfile(snap.data() as UserProfile);
+                    }
+                });
+            } else {
+                setUserProfile(null);
+            }
+        });
+        return unsub;
+    }, []);
+
+    useEffect(() => {
+        const q = query(collection(db, 'planters'));
+        const unsub = onSnapshot(q, (snap) => {
+            setPlanters(snap.docs.map(docSnapshot => ({ ...docSnapshot.data(), id: docSnapshot.id } as Planter)));
+        });
+        return unsub;
+    }, []);
+
+    useEffect(() => {
+        const unsubscribe = onSnapshot(collection(db, 'users'), (snapshot) => {
+            setAllUsers(snapshot.docs.map(docSnapshot => ({ ...docSnapshot.data(), uid: docSnapshot.id } as UserProfile)));
+        });
+        return () => unsubscribe();
+    }, []);
+
+    useEffect(() => {
+        const unsubscribe = onSnapshot(collection(db, 'maintenance_requests'), (snapshot) => {
+            setAllMaintenanceRequests(snapshot.docs.map(docSnapshot => ({ ...docSnapshot.data(), id: docSnapshot.id } as MaintenanceRequest)));
+        });
+        return () => unsubscribe();
+    }, []);
+
+    useEffect(() => {
+        const unsubscribe = onSnapshot(collection(db, 'maintenance_logs'), (snapshot) => {
+            setAllMaintenanceLogs(snapshot.docs.map(docSnapshot => ({ ...docSnapshot.data(), id: docSnapshot.id } as MaintenanceLog)));
+        });
+        return () => unsubscribe();
+    }, []);
+
+    useEffect(() => {
+        const unsubscribe = onSnapshot(collection(db, 'assignments'), (snapshot) => {
+            setAssignments(snapshot.docs.map(docSnapshot => ({ ...docSnapshot.data(), id: docSnapshot.id } as Assignment)));
+        });
+        return () => unsubscribe();
+    }, []);
+
+    useEffect(() => {
+        const unsubscribe = onSnapshot(collection(db, 'notifications'), (snapshot) => {
+            setNotifications(snapshot.docs.map(docSnapshot => ({ ...docSnapshot.data(), id: docSnapshot.id } as AppNotification)));
+        });
+        return () => unsubscribe();
+    }, []);
+
+    useEffect(() => {
+        const unsubscribe = onSnapshot(collection(db, 'messages'), (snapshot) => {
+            setMessages(snapshot.docs.map(docSnapshot => ({ ...docSnapshot.data(), id: docSnapshot.id } as Message)));
+        });
+        return () => unsubscribe();
+    }, []);
+
+    // Polling for health check
+    useEffect(() => {
+        const checkHealth = async () => {
+            try {
+                const res = await fetch('/api/sheets/info');
+                const data = await res.json();
+                setMirroringStatus(prev => ({
+                    ...prev,
+                    isHealthy: res.ok,
+                    lastChecked: new Date().toISOString(),
+                    error: res.ok ? null : (data.error || 'Server error')
+                }));
+            } catch (err) {
+                setMirroringStatus(prev => ({
+                    ...prev,
+                    isHealthy: false,
+                    lastChecked: new Date().toISOString(),
+                    error: 'Connection failed'
+                }));
+            }
+        };
+
+        const interval = setInterval(checkHealth, 30000);
+        checkHealth();
+
+        return () => clearInterval(interval);
+    }, []);
+
+
+    // Manual Sync Handler
+    const handleManualSyncAll = async () => {
+        if (!isAdmin) return;
+        setMirroringStatus(prev => ({ ...prev, isSyncing: true }));
+        try {
+            const res = await fetch(`${import.meta.env.VITE_SHEETS_SYNC_URL || 'http://localhost:8787'}/sync-all`, { method: 'POST' });
+            if (!res.ok) throw new Error(`Sync failed: ${res.statusText}`);
+            alert('Full sync initiated successfully. Data is being mirrored with Google Sheets.');
+            await refreshAdminStoragePanel();
+        } catch (err) {
+            console.error('Manual sync failed:', err);
+            alert('Failed to initiate sync. Please check server logs.');
+        } finally {
+            setMirroringStatus(prev => ({ ...prev, isSyncing: false }));
+        }
+    };
+
     const fetchCurrentGPS = () => {
+
         if ("geolocation" in navigator) {
             navigator.geolocation.getCurrentPosition(
                 (position) => {
@@ -1033,10 +1167,10 @@ export default function App() {
     });
     const [configSaving, setConfigSaving] = useState(false);
     const [configSaved, setConfigSaved] = useState(false);
-    const [sheetInfo, setSheetInfo] = useState<{ ok?: boolean; spreadsheetId?: string; spreadsheetUrl?: string } | null>(null);
+    const [sheetInfo, setSheetInfo] = useState<{ spreadsheetId: string; spreadsheetUrl: string; driveFolderId: string; driveFolderUrl: string } | null>(null);
     const [sheetInfoLoading, setSheetInfoLoading] = useState(false);
     const [sheetInfoError, setSheetInfoError] = useState<string | null>(null);
-    const [latestProofSource, setLatestProofSource] = useState('No proof photo found');
+    const [latestProofSource, setLatestProofSource] = useState<'Google Drive' | 'Cloudinary' | 'Firebase' | 'Unknown'>('Unknown');
     const [latestProofTimestamp, setLatestProofTimestamp] = useState<string | null>(null);
     const [isDownloadingData, setIsDownloadingData] = useState(false);
 
@@ -1359,6 +1493,7 @@ export default function App() {
     const isFarmMech = userProfile?.role === 'farm_mechanization';
     const canManageUsers = hasPermission('manage_users');
     const canAccessSettingsTab = isAdmin || canManageUsers;
+
 
     const userRoleLabel = useMemo(() => {
         if (isAdmin) return 'Farm Mechanization Admin';
@@ -3894,7 +4029,7 @@ export default function App() {
                             </div>
                         )}
                     </div>
-                ) : activeTab === 'hierarchy' && canViewHierarchyTab ? (
+                                ) : activeTab === 'hierarchy' && canViewHierarchyTab ? (
                     <div className="space-y-6">
                         <PageBanner
                             eyebrow="Hierarchy View"
@@ -5500,28 +5635,48 @@ function GallerySection({ planter, onUpload }: { planter: Planter, onUpload: (ur
         if (!file) return;
 
         setIsUploading(true);
+        let url: string | undefined;
         try {
-            const driveUpload = await withTimeout(uploadDriveFile({
-                file,
-                machineId: planter.id,
-                bucket: 'gallery'
-            }), 15000);
+            // Priority 1: Cloudinary
+            const cloudName = (import.meta as any).env.VITE_CLOUDINARY_CLOUD_NAME;
+            const uploadPreset = (import.meta as any).env.VITE_CLOUDINARY_UPLOAD_PRESET;
 
-            let url = driveUpload?.url;
+            if (cloudName && uploadPreset) {
+                const formData = new FormData();
+                formData.append('file', file);
+                formData.append('upload_preset', uploadPreset);
+                formData.append('folder', `farmmech/gallery/${planter.id}`);
+
+                const res = await fetch(`https://api.cloudinary.com/v1_1/${cloudName}/image/upload`, {
+                    method: 'POST',
+                    body: formData
+                });
+                if (res.ok) {
+                    const data = await res.json();
+                    url = data.secure_url;
+                }
+            }
+
+            // Priority 2: Google Drive
+            if (!url) {
+                const driveUpload = await withTimeout(uploadDriveFile({
+                    file,
+                    machineId: planter.id,
+                    bucket: 'gallery'
+                }), 15000);
+                url = driveUpload?.url;
+            }
+
+            // Priority 3: Firebase Storage
             if (!url) {
                 const storageRef = ref(storage, `gallery/${planter.id}/${Date.now()}_${file.name}`);
                 const uploadResult = await withTimeout(uploadBytes(storageRef, file), 15000);
-                if (!uploadResult) {
-                    throw new Error('Gallery upload timed out.');
+                if (uploadResult) {
+                    url = await withTimeout(getDownloadURL(uploadResult.ref), 10000) || undefined;
                 }
-
-                const downloadUrl = await withTimeout(getDownloadURL(uploadResult.ref), 10000);
-                if (!downloadUrl) {
-                    throw new Error('Gallery download URL request timed out.');
-                }
-
-                url = downloadUrl;
             }
+
+            if (!url) throw new Error('All upload methods failed.');
 
             await onUpload(url);
         } catch (err) {
@@ -5604,32 +5759,48 @@ function UpdateForm({ planter, user, machineConfig, onSuccess }: {
         try {
             // 1. Upload Image (optional)
             let imageUrl: string | undefined;
-            let imageUploadSkipped = false;
             if (image) {
                 try {
-                    const driveUpload = await withTimeout(uploadDriveFile({
-                        file: image,
-                        machineId: planter.id,
-                        bucket: 'proofs'
-                    }), 15000);
+                    // Priority 1: Cloudinary
+                    const cloudName = (import.meta as any).env.VITE_CLOUDINARY_CLOUD_NAME;
+                    const uploadPreset = (import.meta as any).env.VITE_CLOUDINARY_UPLOAD_PRESET;
 
-                    if (driveUpload?.url) {
-                        imageUrl = driveUpload.url;
-                    } else {
+                    if (cloudName && uploadPreset) {
+                        const formData = new FormData();
+                        formData.append('file', image);
+                        formData.append('upload_preset', uploadPreset);
+                        formData.append('folder', `farmmech/proofs/${planter.id}`);
+
+                        const res = await fetch(`https://api.cloudinary.com/v1_1/${cloudName}/image/upload`, {
+                            method: 'POST',
+                            body: formData
+                        });
+                        if (res.ok) {
+                            const data = await res.json();
+                            imageUrl = data.secure_url;
+                        }
+                    }
+
+                    // Priority 2: Google Drive
+                    if (!imageUrl) {
+                        const driveUpload = await withTimeout(uploadDriveFile({
+                            file: image,
+                            machineId: planter.id,
+                            bucket: 'proofs'
+                        }), 15000);
+                        imageUrl = driveUpload?.url;
+                    }
+
+                    // Priority 3: Firebase Storage
+                    if (!imageUrl) {
                         const storageRef = ref(storage, `proofs/${planter.id}/${Date.now()}_${image.name}`);
                         const uploadResult = await withTimeout(uploadBytes(storageRef, image), 15000);
                         if (uploadResult) {
-                            const downloadUrl = await withTimeout(getDownloadURL(uploadResult.ref), 10000);
-                            imageUrl = downloadUrl || undefined;
+                            imageUrl = await withTimeout(getDownloadURL(uploadResult.ref), 10000) || undefined;
                         }
                     }
                 } catch (uploadErr) {
                     console.warn('Image upload failed, saving without image:', uploadErr);
-                    imageUploadSkipped = true;
-                }
-
-                if (!imageUrl) {
-                    imageUploadSkipped = true;
                 }
             }
 
@@ -5655,12 +5826,10 @@ function UpdateForm({ planter, user, machineConfig, onSuccess }: {
             });
             void syncFirestoreDocument('planters', planter.id);
 
-            if (imageUploadSkipped) {
-                console.warn('Reading saved without image proof because upload did not complete in time.');
-            }
 
             onSuccess();
         } catch (err) {
+
             console.error(err);
             setError('Failed to save update. Please try again.');
         } finally {
@@ -5809,3 +5978,105 @@ function MapView({ planters, onSelect, allUsers }: { planters: Planter[], onSele
         </MapContainer>
     );
 }
+
+// --- Missing UI Components ---
+
+const MaintenanceUpdatesView: React.FC<{ planters: Planter[], updates: ReadingUpdate[], allUsers: UserProfile[] }> = ({ planters, updates, allUsers }) => {
+    return (
+        <div className="space-y-6">
+            <div className="flex items-center justify-between mb-8">
+                <div>
+                    <h2 className="text-3xl font-serif text-[#1A1A1A]">Maintenance History</h2>
+                    <p className="text-[#5A5A40]/60 mt-1">Full audit trail of all machine interventions and status changes.</p>
+                </div>
+            </div>
+
+            <div className="bg-white rounded-[32px] border border-black/5 shadow-sm overflow-hidden">
+                <table className="w-full text-left border-collapse">
+                    <thead>
+                        <tr className="bg-[#F5F5F0]/50 border-b border-black/5">
+                            <th className="px-8 py-5 text-[10px] font-bold uppercase tracking-wider text-[#5A5A40]/40">Machine</th>
+                            <th className="px-8 py-5 text-[10px] font-bold uppercase tracking-wider text-[#5A5A40]/40">Update Type</th>
+                            <th className="px-8 py-5 text-[10px] font-bold uppercase tracking-wider text-[#5A5A40]/40">Reported By</th>
+                            <th className="px-8 py-5 text-[10px] font-bold uppercase tracking-wider text-[#5A5A40]/40">Timestamp</th>
+                            <th className="px-8 py-5 text-[10px] font-bold uppercase tracking-wider text-[#5A5A40]/40">Status</th>
+                        </tr>
+                    </thead>
+                    <tbody className="divide-y divide-black/5">
+                        {updates.map(update => {
+                            const planter = planters.find(p => p.id === update.planterId);
+                            const reportedBy = allUsers.find(u => u.uid === update.reportedBy)?.displayName || update.reportedBy;
+                            return (
+                                <tr key={update.id} className="hover:bg-slate-50 transition-colors">
+                                    <td className="px-8 py-4">
+                                        <p className="font-bold text-sm">{update.planterId}</p>
+                                        <p className="text-[10px] text-slate-400">{planter?.location || 'Unknown Location'}</p>
+                                    </td>
+                                    <td className="px-8 py-4">
+                                        <div className="flex items-center gap-2">
+                                            <span className="w-2 h-2 rounded-full bg-blue-500"></span>
+                                            <span className="text-sm">Reading Update</span>
+                                        </div>
+                                    </td>
+                                    <td className="px-8 py-4 text-sm font-medium text-slate-600">{reportedBy}</td>
+                                    <td className="px-8 py-4 text-xs text-slate-400">{new Date(update.timestamp).toLocaleString()}</td>
+                                    <td className="px-8 py-4">
+                                        <span className="px-3 py-1 bg-emerald-100 text-emerald-700 rounded-full text-[10px] font-bold uppercase">Success</span>
+                                    </td>
+                                </tr>
+                            );
+                        })}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    );
+};
+
+const AnalyticsDashboard: React.FC<{ planters: Planter[], updates: ReadingUpdate[] }> = ({ planters, updates }) => {
+    const totalAcreage = updates.reduce((acc, curr) => acc + (curr.totalAcreage || 0), 0);
+    const avgAcreage = updates.length > 0 ? totalAcreage / updates.length : 0;
+
+    return (
+        <div className="space-y-8">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                <div className="bg-white p-8 rounded-[32px] border border-black/5 shadow-sm">
+                    <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-2">Total Coverage</p>
+                    <h3 className="text-4xl font-serif text-emerald-600">{totalAcreage.toFixed(2)} <span className="text-lg">Acres</span></h3>
+                    <div className="mt-4 flex items-center gap-2 text-emerald-600/60 text-xs font-bold">
+                        <ArrowUpAZ className="w-3 h-3" />
+                        <span>12% Increase this month</span>
+                    </div>
+                </div>
+
+                <div className="bg-white p-8 rounded-[32px] border border-black/5 shadow-sm">
+                    <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-2">Fleet Utilization</p>
+                    <h3 className="text-4xl font-serif text-slate-800">{((planters.filter(p => p.operatingStatus === 'operating').length / planters.length) * 100).toFixed(1)}%</h3>
+                    <div className="mt-4 flex items-center gap-2 text-slate-400 text-xs font-bold">
+                        <span>{planters.filter(p => p.operatingStatus === 'operating').length} / {planters.length} active units</span>
+                    </div>
+                </div>
+
+                <div className="bg-white p-8 rounded-[32px] border border-black/5 shadow-sm">
+                    <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-2">Efficiency Rating</p>
+                    <h3 className="text-4xl font-serif text-blue-600">8.4 <span className="text-lg">/ 10</span></h3>
+                    <div className="mt-4 flex items-center gap-2 text-blue-400 text-xs font-bold">
+                        <span>Based on average downtime</span>
+                    </div>
+                </div>
+            </div>
+
+            <div className="bg-white p-8 rounded-[32px] border border-black/5 shadow-sm h-80">
+                <h4 className="text-sm font-bold uppercase tracking-wider text-slate-400 mb-6">Acreage Progress Over Time</h4>
+                <ResponsiveContainer width="100%" height="100%">
+                    <BarChart data={updates.slice(-10)}>
+                        <XAxis dataKey="timestamp" tick={{ fontSize: 10 }} tickFormatter={(t) => new Date(t).toLocaleDateString()} />
+                        <YAxis tick={{ fontSize: 10 }} />
+                        <Tooltip />
+                        <Bar dataKey="totalAcreage" fill="#10B981" radius={[4, 4, 0, 0]} />
+                    </BarChart>
+                </ResponsiveContainer>
+            </div>
+        </div>
+    );
+};

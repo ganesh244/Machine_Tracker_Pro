@@ -5,9 +5,39 @@ import { Readable } from 'node:stream';
 import { google, sheets_v4 } from 'googleapis';
 import multer from 'multer';
 import dotenv from 'dotenv';
+import { initializeApp, cert, getApps } from 'firebase-admin/app';
+import { getFirestore } from 'firebase-admin/firestore';
 
 dotenv.config({ path: path.resolve(process.cwd(), '.env.local') });
 dotenv.config({ path: path.resolve(process.cwd(), '.env') });
+
+// ── Firestore Admin ──────────────────────────────────────────────────────────
+const initFirestoreAdmin = () => {
+  const saPath = process.env.GOOGLE_SERVICE_ACCOUNT_JSON_PATH;
+  const saJson = process.env.GOOGLE_SERVICE_ACCOUNT_JSON;
+  let credential;
+  if (saPath) {
+    credential = cert(JSON.parse(fs.readFileSync(path.resolve(process.cwd(), saPath), 'utf8')));
+  } else if (saJson) {
+    credential = cert(JSON.parse(saJson));
+  } else {
+    throw new Error('No service account configured for Firebase Admin.');
+  }
+  const projectId = process.env.VITE_FIREBASE_PROJECT_ID || process.env.FIREBASE_PROJECT_ID;
+  const databaseId = process.env.VITE_FIREBASE_DATABASE_ID || undefined;
+
+  if (getApps().length === 0) {
+    initializeApp({ credential, projectId });
+  }
+  // Pass databaseId to connect to the named (non-default) database
+  return databaseId ? getFirestore(databaseId) : getFirestore();
+};
+
+let _firestoreAdmin: ReturnType<typeof getFirestore> | null = null;
+const getFirestoreAdmin = () => {
+  if (!_firestoreAdmin) _firestoreAdmin = initFirestoreAdmin();
+  return _firestoreAdmin;
+};
 
 type SyncPayload = {
   collection: string;
@@ -240,6 +270,7 @@ const upsertDocument = async ({ collection, documentId, data }: SyncPayload) => 
 
   await ensureSheet(sheets, spreadsheetId, title);
 
+  console.log(`[Sync] Starting upsert for ${collection}/${documentId}`);
   const flattened = flattenObject(data);
   const baseRow: Record<string, string | number | boolean | ''> = {
     documentId,
@@ -257,6 +288,7 @@ const upsertDocument = async ({ collection, documentId, data }: SyncPayload) => 
   }
 
   if (headers.length !== currentHeaders.length || headers.some((header, index) => currentHeaders[index] !== header)) {
+    console.log(`[Sync] Updating headers for ${title}`);
     await setHeaders(sheets, spreadsheetId, title, headers);
   }
 
@@ -264,29 +296,39 @@ const upsertDocument = async ({ collection, documentId, data }: SyncPayload) => 
   const rowIndex = await findRowIndex(sheets, spreadsheetId, title, documentId);
   const lastColumn = toColumnName(headers.length - 1);
 
-  if (rowIndex) {
-    await sheets.spreadsheets.values.update({
+  try {
+    if (rowIndex) {
+      await sheets.spreadsheets.values.update({
+        spreadsheetId,
+        range: `${title}!A${rowIndex}:${lastColumn}${rowIndex}`,
+        valueInputOption: 'RAW',
+        requestBody: {
+          values: [rowValues]
+        }
+      });
+      console.log(`[Sync] Updated existing row ${rowIndex} in ${title}`);
+      return { spreadsheetId, mode: 'updated' };
+    }
+
+    await sheets.spreadsheets.values.append({
       spreadsheetId,
-      range: `${title}!A${rowIndex}:${lastColumn}${rowIndex}`,
+      range: `${title}!A:A`,
       valueInputOption: 'RAW',
+      insertDataOption: 'INSERT_ROWS',
       requestBody: {
         values: [rowValues]
       }
     });
-    return { spreadsheetId, mode: 'updated' };
+    console.log(`[Sync] Appended new row to ${title}`);
+    return { spreadsheetId, mode: 'created' };
+  } catch (error: any) {
+    console.error(`[Sync] Google API Error during ${rowIndex ? 'update' : 'append'}:`, {
+      message: error.message,
+      status: error.status,
+      data: error.response?.data
+    });
+    throw error;
   }
-
-  await sheets.spreadsheets.values.append({
-    spreadsheetId,
-    range: `${title}!A:A`,
-    valueInputOption: 'RAW',
-    insertDataOption: 'INSERT_ROWS',
-    requestBody: {
-      values: [rowValues]
-    }
-  });
-
-  return { spreadsheetId, mode: 'created' };
 };
 
 const deleteDocument = async (collection: string, documentId: string) => {
@@ -434,19 +476,72 @@ app.get('/api/sheets/info', async (_req, res) => {
 });
 
 app.post('/api/sheets/upsert', async (req, res) => {
+  const payload = req.body as SyncPayload;
   try {
-    const payload = req.body as SyncPayload;
     if (!payload?.collection || !payload?.documentId || !payload?.data) {
       return res.status(400).json({ error: 'collection, documentId, and data are required.' });
     }
 
     const result = await upsertDocument(payload);
+    console.log(`Successfully synced ${payload.collection}/${payload.documentId} to sheet.`);
     return res.json({ ok: true, ...result });
   } catch (error) {
-    console.error('Sheets upsert failed:', error);
+    console.error(`ERROR: Sheets upsert failed for ${payload?.collection}/${payload?.documentId}:`, error);
     return res.status(500).json({ ok: false, error: error instanceof Error ? error.message : 'Unknown error' });
   }
 });
+
+// ── Bulk upsert (array of payloads) ─────────────────────────────────────────
+app.post('/api/sheets/bulk-upsert', async (req, res) => {
+  try {
+    const payloads = req.body as SyncPayload[];
+    if (!Array.isArray(payloads) || payloads.length === 0) {
+      return res.status(400).json({ error: 'Expected non-empty array of payloads.' });
+    }
+    const results = await Promise.allSettled(payloads.map(p => upsertDocument(p)));
+    const failed = results.filter(r => r.status === 'rejected').length;
+    console.log(`[Bulk] ${results.length - failed}/${results.length} records synced.`);
+    return res.json({ ok: true, total: results.length, failed });
+  } catch (error) {
+    return res.status(500).json({ ok: false, error: error instanceof Error ? error.message : 'Unknown error' });
+  }
+});
+
+// ── Sync-All: pull all Firestore docs and push to Sheets ────────────────────
+app.post('/sync-all', async (req, res) => {
+  const COLLECTIONS = ['planters', 'updates', 'maintenance_requests', 'maintenance_logs', 'users', 'assignments'];
+  res.json({ ok: true, message: 'Sync started in background. Check server console for progress.' });
+
+  // Run async in background so the HTTP response is returned immediately
+  (async () => {
+    try {
+      const db = getFirestoreAdmin();
+      console.log('[SyncAll] Starting full Firestore → Sheets sync...');
+      for (const collectionName of COLLECTIONS) {
+        try {
+          const snap = await db.collection(collectionName).get();
+          console.log(`[SyncAll] ${collectionName}: ${snap.size} documents`);
+          const payloads: SyncPayload[] = snap.docs.map(doc => ({
+            collection: collectionName,
+            documentId: doc.id,
+            data: doc.data() as Record<string, unknown>
+          }));
+          // Process in batches of 5 to avoid rate limits
+          for (let i = 0; i < payloads.length; i += 5) {
+            await Promise.allSettled(payloads.slice(i, i + 5).map(p => upsertDocument(p)));
+          }
+          console.log(`[SyncAll] ✓ ${collectionName} done`);
+        } catch (err) {
+          console.error(`[SyncAll] Error on collection ${collectionName}:`, err);
+        }
+      }
+      console.log('[SyncAll] ✓ Full sync complete!');
+    } catch (err) {
+      console.error('[SyncAll] Fatal error:', err);
+    }
+  })();
+});
+
 
 app.post('/api/sheets/delete', async (req, res) => {
   try {
