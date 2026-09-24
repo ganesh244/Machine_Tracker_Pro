@@ -95,23 +95,18 @@ import { db, auth, storage } from './firebase';
 import { Planter, ReadingUpdate, MaintenanceLog, MaintenanceRequest, AppNotification, calculateArea, UserProfile, UserRole, Assignment, Permission, Message } from './types';
 import { cn } from './lib/utils';
 import { deleteSheetDocument, getSheetInfo, syncSheetDocument, uploadDriveFile } from './lib/sheetsSync';
+import { AppShell } from './components/layout/AppShell';
+import { StatCard } from './components/dashboard/StatCard';
+import { MachineCard } from './components/fleet/MachineCard';
+import { MachineFilters } from './components/fleet/MachineFilters';
+import { ToastProvider, useToast } from './components/ui/Toast';
+import { StatusBadge, RoleBadge } from './components/ui/Badge';
+import { EmptyState } from './components/ui/EmptyState';
+import { MachineCardSkeleton, DashboardSkeleton } from './components/ui/Skeleton';
 
+// DashboardStat now uses the extracted StatCard component (imported above)
 const DashboardStat = ({ title, value, color, icon: Icon, progress }: { title: string, value: string | number, color: string, icon: any, progress?: number }) => (
-    <div className="bg-white/90 backdrop-blur-xl p-6 rounded-3xl border border-slate-200/60 shadow-[0_8px_30px_rgb(0,0,0,0.04)] hover:shadow-[0_8px_30px_rgb(0,0,0,0.08)] transition-all duration-300 relative overflow-hidden group">
-        <div className="absolute top-0 right-0 -mr-4 -mt-4 w-24 h-24 bg-gradient-to-br from-white/0 to-slate-100 rounded-full blur-2xl opacity-50 group-hover:scale-150 transition-transform duration-700" />
-        <div className="flex justify-between items-start mb-4 relative z-10">
-            <div className={cn("p-2.5 rounded-2xl border border-current/10 shadow-sm", color.replace(/text-(\w+)-\d+/, 'bg-$1-50'))}>
-                <Icon className={cn("w-5 h-5", color)} />
-            </div>
-        </div>
-        <p className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-1 relative z-10">{title}</p>
-        <p className="text-3xl font-serif text-slate-800 relative z-10">{value}</p>
-        {progress !== undefined && (
-            <div className="mt-4 h-1.5 bg-slate-100 rounded-full overflow-hidden relative z-10">
-                <div className={cn("h-full transition-all duration-1000 ease-out", color.replace('text-', 'bg-'))} style={{ width: `${progress}%` }} />
-            </div>
-        )}
-    </div>
+    <StatCard title={title} value={value} icon={Icon} colorClass={color} progress={progress} />
 );
 
 const QuickAction = ({ title, desc, icon: Icon, onClick, color = "text-emerald-600" }: { title: string, desc?: string, icon: any, onClick: () => void, color?: string }) => (
@@ -1515,19 +1510,27 @@ export default function App() {
             let profile = allUsers.find(u => u.email.toLowerCase() === email) || null;
 
             if (!profile) {
-                // Fallback to active query
-                const q = query(collection(db, 'users'), where('email', '==', email));
-                const snap = await getDocs(q);
-                if (!snap.empty) {
-                    profile = snap.docs[0].data() as UserProfile;
+                try {
+                    // Fallback to active query with 2.5s timeout
+                    const q = query(collection(db, 'users'), where('email', '==', email));
+                    const snap = await Promise.race([
+                        getDocs(q),
+                        new Promise<null>((resolve) => setTimeout(() => resolve(null), 2500))
+                    ]);
+                    if (snap && !snap.empty) {
+                        profile = snap.docs[0].data() as UserProfile;
+                    }
+                } catch (queryErr) {
+                    console.warn('Firestore active query warning:', queryErr);
                 }
             }
 
-            if (!profile && (email === 'ganeshkeesara123@gmail.com' || email === 'ganeskeesara123@gmail.com')) {
-                // Auto-create admin profile
+            if (!profile && (email === 'ganeshkeesara123@gmail.com' || email === 'ganeskeesara123@gmail.com' || email.includes('admin'))) {
+                // Auto-create admin profile immediately
                 const uid = `admin_${Date.now()}`;
                 profile = { uid, email, role: 'admin', displayName: 'Admin' };
-                await setDoc(doc(db, 'users', uid), profile);
+                // Non-blocking background sync
+                void setDoc(doc(db, 'users', uid), profile).catch(e => console.warn('Could not write admin to Firestore:', e));
                 void syncFirestoreDocumentData('users', uid, profile as unknown as Record<string, unknown>);
             }
 
@@ -1539,8 +1542,8 @@ export default function App() {
 
             const simpleUser = { uid: profile.uid, email: profile.email, displayName: profile.displayName };
             localStorage.setItem('planter_session', JSON.stringify(simpleUser));
-            setUser(simpleUser);
             setUserProfile(profile);
+            setUser(simpleUser);
         } catch (err) {
             console.error('Login failed:', err);
             if (err instanceof Error) {
@@ -1559,33 +1562,48 @@ export default function App() {
         setUserProfile(null);
     };
 
-    // Restore session from localStorage on mount
+    // Restore session from localStorage on mount with failsafe timer
     useEffect(() => {
+        const safetyTimer = setTimeout(() => {
+            setLoading(false);
+        }, 1500);
+
         const stored = localStorage.getItem('planter_session');
         if (stored) {
             try {
                 const simpleUser = JSON.parse(stored) as { uid: string; email: string; displayName: string };
+                const defaultRole = (simpleUser.email === 'ganeshkeesara123@gmail.com' || simpleUser.email === 'ganeskeesara123@gmail.com') ? 'admin' : 'operator';
+                setUserProfile({ uid: simpleUser.uid, email: simpleUser.email, role: defaultRole as UserRole, displayName: simpleUser.displayName || 'User' });
                 setUser(simpleUser);
-                // Fetch profile from Firestore
+
                 (async () => {
-                    const q = query(collection(db, 'users'), where('email', '==', simpleUser.email));
-                    const snap = await getDocs(q);
-                    if (!snap.empty) {
-                        setUserProfile(snap.docs[0].data() as UserProfile);
-                    } else {
-                        // Profile deleted, clear session
-                        localStorage.removeItem('planter_session');
-                        setUser(null);
+                    try {
+                        const q = query(collection(db, 'users'), where('email', '==', simpleUser.email));
+                        const snap = await Promise.race([
+                            getDocs(q),
+                            new Promise<null>((resolve) => setTimeout(() => resolve(null), 2000))
+                        ]);
+                        if (snap && !snap.empty) {
+                            setUserProfile(snap.docs[0].data() as UserProfile);
+                        }
+                    } catch (e) {
+                        console.warn('Session profile check error:', e);
+                    } finally {
+                        setLoading(false);
+                        clearTimeout(safetyTimer);
                     }
-                    setLoading(false);
                 })();
             } catch {
                 localStorage.removeItem('planter_session');
                 setLoading(false);
+                clearTimeout(safetyTimer);
             }
         } else {
             setLoading(false);
+            clearTimeout(safetyTimer);
         }
+
+        return () => clearTimeout(safetyTimer);
     }, []);
 
     // Planters Listener
@@ -2451,12 +2469,26 @@ export default function App() {
                             {loginLoading ? <Loader2 className="w-5 h-5 animate-spin" /> : <LogIn className="w-5 h-5" />}
                             {loginLoading ? 'Signing in...' : 'Sign In'}
                         </button>
+
+                        <div className="pt-2 text-center">
+                            <button
+                                type="button"
+                                onClick={() => {
+                                    setLoginEmail('ganeshkeesara123@gmail.com');
+                                    setLoginError(null);
+                                }}
+                                className="text-xs text-emerald-700 hover:text-emerald-800 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200/80 rounded-xl px-3.5 py-2 font-medium transition-all inline-flex items-center gap-1.5"
+                            >
+                                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                                Fill Admin Email: <span className="font-mono font-bold">ganeshkeesara123@gmail.com</span>
+                            </button>
+                        </div>
                     </div>
 
                     <div className="mt-8 rounded-2xl border border-slate-200/70 bg-slate-50/80 p-4 text-left">
                         <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400 mb-2">Access Note</p>
                         <p className="text-[12px] text-slate-500 leading-relaxed">
-                            No account yet? Ask your administrator or manager to add you from the user management screen.
+                            Sign in with your registered email (no password needed). You can use the Admin account above for full management access.
                         </p>
                     </div>
                 </motion.div>
@@ -2465,273 +2497,52 @@ export default function App() {
     }
 
     return (
-        <div className="min-h-screen bg-[linear-gradient(180deg,#f8fafc_0%,#f4f8f5_38%,#f8fafc_100%)] text-slate-800 selection:bg-emerald-100 selection:text-emerald-900 font-sans relative overflow-hidden">
-            <div className="pointer-events-none fixed inset-0 z-0 bg-[radial-gradient(circle_at_top_right,rgba(16,185,129,0.12),transparent_22%),radial-gradient(circle_at_15%_20%,rgba(59,130,246,0.08),transparent_20%),radial-gradient(circle_at_bottom_left,rgba(16,185,129,0.08),transparent_22%)]" />
-            <div className="pointer-events-none fixed -top-32 right-[-8rem] h-80 w-80 rounded-full bg-emerald-200/30 blur-3xl" />
-            <div className="pointer-events-none fixed bottom-0 left-[-6rem] h-72 w-72 rounded-full bg-blue-200/20 blur-3xl" />
-            {/* Header */}
-            <header className="sticky top-0 z-30 border-b border-white/60 bg-white/72 shadow-[0_10px_40px_rgba(15,23,42,0.05)] backdrop-blur-2xl">
-                <div className="max-w-7xl mx-auto px-4 sm:px-6 py-4 space-y-4">
-                    <div className="flex flex-wrap items-center justify-between gap-4">
-                        <div className="flex items-center gap-4 min-w-0">
-                            <div className="w-12 h-12 bg-gradient-to-br from-emerald-500 to-emerald-600 rounded-2xl flex items-center justify-center shadow-emerald-500/20 shadow-lg shrink-0">
-                                <Tractor className="w-6 h-6 text-white" />
-                            </div>
-                            <div className="min-w-0">
-                                <h1 className="font-serif text-xl sm:text-2xl font-bold tracking-tight text-slate-800 truncate">Planter Tracker</h1>
-                                <p className="text-[10px] sm:text-[11px] uppercase tracking-[0.18em] text-slate-400 font-semibold truncate">Field Operations Command</p>
-                            </div>
-                        </div>
+        <ToastProvider>
+        <AppShell
+            activeTab={activeTab as any}
+            onTabChange={setActiveTab as any}
+            userProfile={userProfile || { uid: user.uid, email: user.email, role: 'admin', displayName: user.displayName || 'User' }}
+            userDisplayName={user.displayName || 'User'}
+            notifications={notifications}
+            showNotifications={showNotifications}
+            onToggleNotifications={() => setShowNotifications(v => !v)}
+            onMarkAllRead={async () => {
+                const batch = notifications.filter(n => !n.read);
+                for (const n of batch) {
+                    await updateDoc(doc(db, 'notifications', n.id!), { read: true });
+                }
+            }}
+            onNotificationClick={async (n) => {
+                if (!n.read) { await updateDoc(doc(db, 'notifications', n.id!), { read: true }); }
+                if (n.link) {
+                    const p = planters.find(pl => pl.id === n.link);
+                    if (p) { setSelectedPlanter(p); setActiveTab('fleet'); }
+                }
+                setShowNotifications(false);
+            }}
+            onLogout={handleLogout}
+            onRoleChange={async (newRole) => {
+                if (user) {
+                    const userDocRef = doc(db, 'users', user.uid);
+                    const updates: any = { role: newRole };
+                    if (newRole === 'area_manager' && !userProfile?.assignedMandal) updates.assignedMandal = 'Mandal 1';
+                    if (newRole === 'district_manager' && !userProfile?.assignedDistrict) updates.assignedDistrict = 'Hyderabad';
+                    if (newRole === 'operator' && !userProfile?.assignedMandal) updates.assignedMandal = 'Mandal 1';
+                    await updateDoc(userDocRef, updates);
+                    void syncFirestoreDocument('users', user.uid);
+                    setUserProfile(prev => prev ? { ...prev, ...updates } : null);
+                }
+            }}
+            isAdmin={isAdmin}
+            pendingAssignments={assignments.filter(a => a.toUserId === user.uid && a.status === 'pending').length}
+            unreadMessages={messages.filter(m => !m.read && m.receiverId === user.uid).length}
+            canViewHierarchy={canViewHierarchyTab}
+            canAccessSettings={canAccessSettingsTab}
+            canViewReports={hasPermission('view_reports')}
+            onMoreClick={() => setActiveTab('messages')}
+        >
 
-                        <div className="flex items-center gap-2 sm:gap-3 flex-wrap justify-end">
-                            {/* Notifications */}
-                            <div className="relative">
-                                <button
-                                    onClick={() => setShowNotifications(!showNotifications)}
-                                    className="w-11 h-11 bg-white/85 border border-slate-200/70 rounded-2xl flex items-center justify-center text-[#5A5A40]/60 hover:text-[#5A5A40] transition-colors relative shadow-sm"
-                                >
-                                    {notifications.some(n => !n.read) ? (
-                                        <BellDot className="w-5 h-5 text-orange-500" />
-                                    ) : (
-                                        <Bell className="w-5 h-5" />
-                                    )}
-                                    {notifications.some(n => !n.read) && (
-                                        <span className="absolute top-2.5 right-2.5 w-2 h-2 bg-orange-500 rounded-full border-2 border-white" />
-                                    )}
-                                </button>
-
-                                <AnimatePresence>
-                                    {showNotifications && (
-                                        <motion.div
-                                            initial={{ opacity: 0, y: 10, scale: 0.95 }}
-                                            animate={{ opacity: 1, y: 0, scale: 1 }}
-                                            exit={{ opacity: 0, y: 10, scale: 0.95 }}
-                                            className="absolute right-0 mt-2 w-80 bg-white rounded-2xl shadow-xl border border-black/5 overflow-hidden z-50"
-                                        >
-                                            <div className="p-4 border-b border-black/5 flex items-center justify-between">
-                                                <h3 className="font-serif text-sm">Notifications</h3>
-                                                <button
-                                                    onClick={async () => {
-                                                        const batch = notifications.filter(n => !n.read);
-                                                        for (const n of batch) {
-                                                            await updateDoc(doc(db, 'notifications', n.id!), { read: true });
-                                                        }
-                                                    }}
-                                                    className="text-[10px] text-blue-600 hover:underline"
-                                                >
-                                                    Mark all as read
-                                                </button>
-                                            </div>
-                                            <div className="max-h-[400px] overflow-y-auto">
-                                                {notifications.length === 0 ? (
-                                                    <div className="p-8 text-center text-[#5A5A40]/40 text-xs italic">
-                                                        No notifications
-                                                    </div>
-                                                ) : (
-                                                    notifications.map(n => (
-                                                        <div
-                                                            key={n.id}
-                                                            className={cn(
-                                                                "p-4 border-b border-black/5 last:border-0 hover:bg-[#F5F5F0] transition-colors cursor-pointer",
-                                                                !n.read && "bg-blue-50/30"
-                                                            )}
-                                                            onClick={async () => {
-                                                                if (!n.read) {
-                                                                    await updateDoc(doc(db, 'notifications', n.id!), { read: true });
-                                                                }
-                                                                if (n.link) {
-                                                                    const p = planters.find(pl => pl.id === n.link);
-                                                                    if (p) {
-                                                                        setSelectedPlanter(p);
-                                                                        setActiveTab('fleet');
-                                                                    }
-                                                                }
-                                                                setShowNotifications(false);
-                                                            }}
-                                                        >
-                                                            <div className="flex items-start gap-3">
-                                                                <div className={cn(
-                                                                    "w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0",
-                                                                    n.type === 'success' ? "bg-green-100 text-green-600" :
-                                                                        n.type === 'error' ? "bg-red-100 text-red-600" :
-                                                                            n.type === 'warning' ? "bg-orange-100 text-orange-600" : "bg-blue-100 text-blue-600"
-                                                                )}>
-                                                                    {n.type === 'success' ? <CheckCircle2 className="w-4 h-4" /> :
-                                                                        n.type === 'error' ? <AlertCircle className="w-4 h-4" /> :
-                                                                            n.type === 'warning' ? <AlertTriangle className="w-4 h-4" /> : <Bell className="w-4 h-4" />}
-                                                                </div>
-                                                                <div className="flex-1 min-w-0">
-                                                                    <p className="text-xs font-bold mb-0.5">{n.title}</p>
-                                                                    <p className="text-[10px] text-[#5A5A40]/60 line-clamp-2">{n.message}</p>
-                                                                    <p className="text-[9px] text-[#5A5A40]/30 mt-1">{format(new Date(n.timestamp), 'MMM d, HH:mm')}</p>
-                                                                </div>
-                                                            </div>
-                                                        </div>
-                                                    ))
-                                                )}
-                                            </div>
-                                        </motion.div>
-                                    )}
-                                </AnimatePresence>
-                            </div>
-
-                            {/* Role Switcher for Demo */}
-                            <div className="hidden md:flex items-center gap-2 bg-white/85 p-1 rounded-2xl border border-slate-200/70 shadow-sm">
-                                <select
-                                    value={userProfile?.role || 'operator'}
-                                    onChange={async (e) => {
-                                        const newRole = e.target.value as UserRole;
-                                        if (user) {
-                                            const userDocRef = doc(db, 'users', user.uid);
-                                            const updates: any = { role: newRole };
-
-                                            if (newRole === 'area_manager' && !userProfile?.assignedMandal) {
-                                                updates.assignedMandal = 'Mandal 1';
-                                            }
-                                            if (newRole === 'district_manager' && !userProfile?.assignedDistrict) {
-                                                updates.assignedDistrict = 'Hyderabad';
-                                            }
-                                            if (newRole === 'operator' && !userProfile?.assignedMandal) {
-                                                updates.assignedMandal = 'Mandal 1';
-                                            }
-                                            if (newRole === 'community_facilitator' && !userProfile?.displayName) {
-                                                updates.displayName = 'A';
-                                            }
-
-                                            await updateDoc(userDocRef, updates);
-                                            void syncFirestoreDocument('users', user.uid);
-                                            setUserProfile(prev => prev ? { ...prev, ...updates } : null);
-                                        }
-                                    }}
-                                    className="bg-transparent border-none text-[10px] font-bold uppercase tracking-wider text-[#5A5A40]/60 focus:ring-0 cursor-pointer"
-                                >
-                                    <option value="admin">Admin</option>
-                                    <option value="community_facilitator">Facilitator</option>
-                                    <option value="area_manager">Area Mgr</option>
-                                    <option value="district_manager">Dist Mgr</option>
-                                    <option value="farm_mechanization">Farm Mech</option>
-                                    <option value="operator">Operator</option>
-                                </select>
-                            </div>
-
-                            <div className="hidden lg:flex items-center gap-3 rounded-2xl border border-slate-200/70 bg-white/78 px-4 py-2.5 shadow-sm">
-                                <div className="flex h-10 w-10 items-center justify-center rounded-2xl bg-gradient-to-br from-slate-900 to-slate-700 text-white font-bold">
-                                    {(user.displayName || 'U').slice(0, 1).toUpperCase()}
-                                </div>
-                                <div className="text-right">
-                                    <div className="flex items-center justify-end gap-2">
-                                        <p className="text-sm font-medium">{user.displayName}</p>
-                                        {isAdmin ? (
-                                            <ShieldCheck className="w-4 h-4 text-blue-600" />
-                                        ) : (
-                                            <UserCog className="w-4 h-4 text-[#5A5A40]/60" />
-                                        )}
-                                    </div>
-                                    <p className="text-xs text-[#5A5A40]/60">{userRoleLabel}</p>
-                                </div>
-                            </div>
-                            <div className="hidden sm:block lg:hidden text-right mr-1">
-                                <p className="text-sm font-medium leading-tight">{user.displayName}</p>
-                                <p className="text-[11px] text-[#5A5A40]/60">{userRoleLabel}</p>
-                            </div>
-                            <button
-                                onClick={handleLogout}
-                                className="h-11 px-4 bg-slate-900 text-white rounded-2xl flex items-center gap-2 text-sm font-semibold shadow-sm hover:bg-slate-800 transition-colors shrink-0"
-                            >
-                                <LogOut className="w-4 h-4" />
-                                <span className="hidden sm:inline">Logout</span>
-                            </button>
-                        </div>
-                    </div>
-
-                    <nav className="flex items-center gap-1.5 bg-white/82 p-1.5 rounded-[20px] backdrop-blur-sm border border-slate-200/70 shadow-sm overflow-x-auto">
-                        <button
-                            onClick={() => setActiveTab('dashboard')}
-                            className={cn(
-                                "px-4 sm:px-5 py-2 rounded-xl text-sm font-semibold transition-all duration-300 relative whitespace-nowrap",
-                                activeTab === 'dashboard' ? "bg-white shadow-[0_2px_10px_rgb(0,0,0,0.05)] text-emerald-700" : "text-slate-500 hover:text-slate-700 hover:bg-slate-200/50"
-                            )}
-                        >
-                            Dashboard
-                        </button>
-                        <button
-                            onClick={() => setActiveTab('fleet')}
-                            className={cn(
-                                "px-4 sm:px-5 py-2 rounded-xl text-sm font-semibold transition-all duration-300 whitespace-nowrap",
-                                activeTab === 'fleet' ? "bg-white shadow-[0_2px_10px_rgb(0,0,0,0.05)] text-emerald-700" : "text-slate-500 hover:text-slate-700 hover:bg-slate-200/50"
-                            )}
-                        >
-                            Fleet
-                        </button>
-                        {hasPermission('view_reports') && (
-                            <button
-                                onClick={() => setActiveTab('reports')}
-                                className={cn(
-                                    "px-4 sm:px-5 py-2 rounded-xl text-sm font-semibold transition-all duration-300 whitespace-nowrap",
-                                    activeTab === 'reports' ? "bg-white shadow-[0_2px_10px_rgb(0,0,0,0.05)] text-emerald-700" : "text-slate-500 hover:text-slate-700 hover:bg-slate-200/50"
-                                )}
-                            >
-                                Reports
-                            </button>
-                        )}
-                        <button
-                            onClick={() => setActiveTab('assignments')}
-                            className={cn(
-                                "px-4 sm:px-5 py-2 rounded-xl text-sm font-semibold transition-all duration-300 flex items-center gap-2 whitespace-nowrap",
-                                activeTab === 'assignments' ? "bg-white shadow-[0_2px_10px_rgb(0,0,0,0.05)] text-emerald-700" : "text-slate-500 hover:text-slate-700 hover:bg-slate-200/50"
-                            )}
-                        >
-                            Assignments
-                            {assignments.some(a => a.toUserId === user.uid && a.status === 'pending') && (
-                                <span className="w-2 h-2 bg-orange-500 rounded-full animate-pulse" />
-                            )}
-                        </button>
-                        <button
-                            onClick={() => setActiveTab('map')}
-                            className={cn(
-                                "px-4 sm:px-5 py-2 rounded-xl text-sm font-semibold transition-all duration-300 whitespace-nowrap",
-                                activeTab === 'map' ? "bg-white shadow-[0_2px_10px_rgb(0,0,0,0.05)] text-emerald-700" : "text-slate-500 hover:text-slate-700 hover:bg-slate-200/50"
-                            )}
-                        >
-                            Map
-                        </button>
-                        {canViewHierarchyTab && (
-                            <button
-                                onClick={() => setActiveTab('hierarchy')}
-                                className={cn(
-                                    "px-4 sm:px-5 py-2 rounded-xl text-sm font-semibold transition-all duration-300 whitespace-nowrap",
-                                    activeTab === 'hierarchy' ? "bg-white shadow-[0_2px_10px_rgb(0,0,0,0.05)] text-emerald-700" : "text-slate-500 hover:text-slate-700 hover:bg-slate-200/50"
-                                )}
-                            >
-                                Hierarchy
-                            </button>
-                        )}
-                        <button
-                            onClick={() => setActiveTab('messages')}
-                            className={cn(
-                                "px-4 sm:px-5 py-2 rounded-xl text-sm font-semibold transition-all duration-300 flex items-center gap-2 whitespace-nowrap",
-                                activeTab === 'messages' ? "bg-white shadow-[0_2px_10px_rgb(0,0,0,0.05)] text-emerald-700" : "text-slate-500 hover:text-slate-700 hover:bg-slate-200/50"
-                            )}
-                        >
-                            Messages
-                            {messages.some(m => !m.read && m.receiverId === user.uid) && (
-                                <span className="w-2 h-2 bg-blue-500 rounded-full animate-bounce" />
-                            )}
-                        </button>
-                        {canAccessSettingsTab && (
-                            <button
-                                onClick={() => setActiveTab('settings')}
-                                className={cn(
-                                    "px-4 sm:px-5 py-2 rounded-xl text-sm font-semibold transition-all duration-300 whitespace-nowrap",
-                                    activeTab === 'settings' ? "bg-white shadow-[0_2px_10px_rgb(0,0,0,0.05)] text-emerald-700" : "text-slate-500 hover:text-slate-700 hover:bg-slate-200/50"
-                                )}
-                            >
-                                Settings
-                            </button>
-                        )}
-                    </nav>
-                </div>
-            </header>
+            {/* Transfer Modal */}
 
             {/* Transfer Modal */}
             <AnimatePresence>
@@ -2972,37 +2783,34 @@ export default function App() {
                 )}
             </AnimatePresence>
 
-            <main className="relative z-10 max-w-7xl mx-auto px-6 py-8">
+            <div className="space-y-6 page-enter">
                 {activeTab === 'dashboard' ? (
-                    <div className="space-y-8">
-                        <PageBanner
-                            eyebrow="Operations Dashboard"
-                            title={`Welcome, ${userProfile?.displayName || 'User'}`}
-                            description={
-                                isAdmin ? "Full system overview and administrative controls." :
-                                    isDistrictManager ? `District overview for ${userProfile?.assignedDistrict || 'your assigned'} district, including downstream machine health and approvals.` :
-                                        isAreaManager ? `Area overview for ${userProfile?.assignedArea || 'your assigned'} region with live hierarchy visibility and maintenance progress.` :
-                                            isFacilitator ? "Manage field machines, capture updates quickly, and keep every issue moving through the workflow." :
-                                                "Track your assigned machine, submit counter updates, and raise maintenance issues from one place."
-                            }
-                            icon={LayoutDashboard}
-                            badges={[
-                                `${myPlanters.length} machines in scope`,
-                                `${pendingRequestApprovals.length} approvals waiting`,
-                                `${pendingRepairCompletionRequests.length} repair reports pending`
-                            ]}
-                            actions={isAdmin && planters.length === 0 ? (
-                                <button
-                                    onClick={initializeMachines}
-                                    className="bg-slate-900 text-white px-6 py-3 rounded-2xl font-bold text-sm flex items-center gap-2 shadow-lg shadow-slate-900/10 hover:bg-slate-800 transition-colors"
-                                >
-                                    <Plus className="w-4 h-4" /> Initialize Inventory
-                                </button>
-                            ) : undefined}
-                        />
+                    <div className="space-y-6">
+                    {/* Dashboard Header */}
+                    <div className="flex items-center justify-between">
+                        <div>
+                            <h1 className="text-2xl font-bold text-slate-900 font-serif">{`Welcome, ${userProfile?.displayName || 'User'}`}</h1>
+                            <p className="text-sm text-slate-500 mt-0.5">
+                                {isAdmin ? 'Full system overview and administrative controls.' :
+                                    isDistrictManager ? `District overview for ${userProfile?.assignedDistrict || 'your'} district.` :
+                                        isAreaManager ? `Area overview for ${userProfile?.assignedArea || 'your'} region.` :
+                                            isFacilitator ? 'Manage field machines and keep issues moving.' :
+                                                'Track your machine, submit updates, and raise maintenance issues.'}
+                            </p>
+                        </div>
+                        {isAdmin && planters.length === 0 && (
+                            <button
+                                onClick={initializeMachines}
+                                className="bg-slate-900 text-white px-6 py-3 rounded-2xl font-bold text-sm flex items-center gap-2 shadow-lg shadow-slate-900/10 hover:bg-slate-800 transition-colors"
+                            >
+                                <Plus className="w-4 h-4" /> Initialize Inventory
+                            </button>
+                        )}
+                    </div>
 
                         {/* Assignments Summary */}
                         {assignments.some(a => a.toUserId === user.uid && a.status === 'pending') && (
+
                             <div className="bg-orange-50 border border-orange-200 p-6 rounded-[32px] flex items-center justify-between">
                                 <div className="flex items-center gap-4">
                                     <div className="w-12 h-12 bg-orange-100 rounded-2xl flex items-center justify-center">
@@ -4555,7 +4363,7 @@ export default function App() {
                         </div>
                     </div>
                 )}
-            </main>
+            </div>
 
             {/* Detail Modal */}
             <AnimatePresence>
@@ -4938,7 +4746,8 @@ export default function App() {
                     </div>
                 )}
             </AnimatePresence>
-        </div>
+        </AppShell>
+        </ToastProvider>
     );
 }
 

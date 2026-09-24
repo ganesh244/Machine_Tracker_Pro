@@ -2,51 +2,43 @@ import { initializeApp } from 'firebase/app';
 import { getFirestore, connectFirestoreEmulator } from 'firebase/firestore';
 import { getAuth, connectAuthEmulator } from 'firebase/auth';
 import { getStorage } from 'firebase/storage';
+import defaultAppletConfig from '../firebase-applet-config.json';
 
-// Use environment variables for production readiness
-const env = (import.meta as any).env;
-const useProductionFirebase = env.VITE_USE_PRODUCTION_FIREBASE === 'true';
-const isUsingEmulator = env.DEV && !useProductionFirebase;
+// Use environment variables or fallback to applet configuration
+const env = (import.meta as any).env || {};
 
-const firebaseConfig = isUsingEmulator
-  ? {
-      apiKey: env.VITE_FIREBASE_API_KEY || 'demo-api-key',
-      authDomain: env.VITE_FIREBASE_AUTH_DOMAIN || 'demo-farmmech.firebaseapp.com',
-      projectId: env.VITE_FIREBASE_PROJECT_ID || 'demo-farmmech',
-      storageBucket: env.VITE_FIREBASE_STORAGE_BUCKET || 'demo-farmmech.appspot.com',
-      messagingSenderId: env.VITE_FIREBASE_MESSAGING_SENDER_ID || '000000000000',
-      appId: env.VITE_FIREBASE_APP_ID || '1:000000000000:web:demo'
-    }
-  : {
-      apiKey: env.VITE_FIREBASE_API_KEY,
-      authDomain: env.VITE_FIREBASE_AUTH_DOMAIN,
-      projectId: env.VITE_FIREBASE_PROJECT_ID,
-      storageBucket: env.VITE_FIREBASE_STORAGE_BUCKET,
-      messagingSenderId: env.VITE_FIREBASE_MESSAGING_SENDER_ID,
-      appId: env.VITE_FIREBASE_APP_ID
-    };
+const firebaseConfig = {
+  apiKey: env.VITE_FIREBASE_API_KEY || defaultAppletConfig.apiKey,
+  authDomain: env.VITE_FIREBASE_AUTH_DOMAIN || defaultAppletConfig.authDomain,
+  projectId: env.VITE_FIREBASE_PROJECT_ID || defaultAppletConfig.projectId,
+  storageBucket: env.VITE_FIREBASE_STORAGE_BUCKET || defaultAppletConfig.storageBucket,
+  messagingSenderId: env.VITE_FIREBASE_MESSAGING_SENDER_ID || defaultAppletConfig.messagingSenderId,
+  appId: env.VITE_FIREBASE_APP_ID || defaultAppletConfig.appId
+};
 
 const app = initializeApp(firebaseConfig);
-const firestoreDatabaseId = (env.VITE_FIREBASE_DATABASE_ID || '').trim();
+const firestoreDatabaseId = (env.VITE_FIREBASE_DATABASE_ID || defaultAppletConfig.firestoreDatabaseId || '').trim();
 export const db = firestoreDatabaseId ? getFirestore(app, firestoreDatabaseId) : getFirestore(app);
 export const auth = getAuth(app);
+export const storage = getStorage(app);
 
-// Connect to local Firebase Emulator only in development
-if (isUsingEmulator) {
-  console.log('Connecting to local Firebase emulators...');
-  connectFirestoreEmulator(db, 'localhost', 8080);
-  connectAuthEmulator(auth, 'http://localhost:9099');
+// Only connect to local emulator if explicitly enabled
+const useEmulator = env.VITE_USE_FIREBASE_EMULATOR === 'true';
+if (useEmulator) {
+  console.log('Connecting to local Firebase emulators on 8080/9099...');
+  try {
+    connectFirestoreEmulator(db, 'localhost', 8080);
+    connectAuthEmulator(auth, 'http://localhost:9099');
+  } catch (e) {
+    console.warn('Could not connect to Firebase emulator:', e);
+  }
 }
 
 if (env.DEV) {
   console.log(
-    'Firebase project:',
+    'Firebase connected to:',
     firebaseConfig.projectId,
-    'mode:',
-    isUsingEmulator ? 'emulator' : 'cloud',
-    'firestoreDb:',
+    'Database ID:',
     firestoreDatabaseId || '(default)'
   );
 }
-
-export const storage = getStorage(app);

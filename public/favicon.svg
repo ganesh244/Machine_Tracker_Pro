@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" fill="none">
+  <rect width="48" height="48" rx="12" fill="#166534"/>
+  <rect x="2" y="2" width="44" height="44" rx="10" stroke="#22c55e" stroke-opacity="0.3" stroke-width="2"/>
+  <!-- Tractor silhouette / Agri-tech glyph -->
+  <path d="M12 28h11v4H12z" fill="#bbf7d0"/>
+  <circle cx="16" cy="34" r="5" fill="#22c55e" stroke="#166534" stroke-width="2"/>
+  <circle cx="33" cy="31" r="7" fill="#22c55e" stroke="#166534" stroke-width="2"/>
+  <circle cx="33" cy="31" r="3" fill="#166534"/>
+  <path d="M23 20h8v8h-8z" fill="#bbf7d0"/>
+  <path d="M20 23h3v5h-3z" fill="#86efac"/>
+  <path d="M25 15h5v5h-5z" fill="#22c55e"/>
+</svg>
