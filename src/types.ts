@@ -28,25 +28,59 @@ export interface UserProfile {
   permissions?: Permission[]; // Granular overrides if needed
 }
 
+export interface HierarchicalLocation {
+  district: string;
+  mandal: string;
+  village: string;
+  gps: {
+    lat: number;
+    lng: number;
+  };
+}
+
 export interface Planter {
   id: string;
   name?: string;
   type?: string;
+  machineType?: string;
+  cfJf?: string;
+  initialOperator?: string;
+  registrationDate?: string;
+  currentCustodian?: string;
+  status?: 'registered_unused' | 'in_use' | 'idle' | 'maintenance';
   serialNumber?: string;
+  brand?: string;
+  model?: string;
+  purchaseDate?: string;
+  purchaseCost?: number;
+  warranty?: string;
+  manualLink?: string;
+  maintenanceSchedule?: string;
+  
+  /** @deprecated use status instead */
   operatingStatus: 'operating' | 'maintenance' | 'idle';
+  
   currentHolderId: string;
   currentHolderRole: UserRole;
-  location: string;
+  
+  location?: string | HierarchicalLocation;
+  
+  /** @deprecated legacy field, use location.mandal */
   mandal?: string;
+  /** @deprecated legacy field, use location.district */
   district?: string;
+  /** @deprecated legacy field, use location.state */
   state?: string;
+  /** @deprecated legacy field, use location.gps.lat */
   lat?: number;
+  /** @deprecated legacy field, use location.gps.lng */
   lng?: number;
   lastReading: number;
   lastUpdated: string;
   gallery?: string[];
   maintenanceNotes?: string;
   problemDescription?: string;
+  notes?: { author: string; date: string; text: string }[];
 }
 
 export interface Assignment {
@@ -73,17 +107,26 @@ export interface Message {
 export interface ReadingUpdate {
   id?: string;
   planterId: string;
+  type: 'reading' | 'handover';
   previousReading: number;
   newReading: number;
   distanceKm: number;
   areaAcres: number;
+  fuelConsumed?: number;
+  operatorName?: string;
+  weatherNotes?: string;
   imageUrl: string;
   timestamp: string;
   updatedBy: string;
-  location?: {
-    lat: number;
-    lng: number;
-  };
+  location?: HierarchicalLocation;
+  farmerName?: string;
+  cfJf?: string;
+  cropType?: string;
+  acresCovered?: number;
+  usageStartDate?: string;
+  usageEndDate?: string;
+  handoverFrom?: string;
+  handoverTo?: string;
 }
 
 export interface MaintenanceLog {
@@ -105,6 +148,18 @@ export interface MaintenanceLog {
   };
 }
 
+export interface PreventiveMaintenanceSchedule {
+  id?: string;
+  planterId: string;
+  taskName: string;
+  frequencyHours?: number; // maintenance due every X hours of reading
+  frequencyDays?: number; // maintenance due every X days
+  lastCompletedReading?: number;
+  lastCompletedDate?: string;
+  nextDueDate?: string;
+  nextDueReading?: number;
+  status: 'active' | 'overdue' | 'completed';
+}
 export interface MaintenanceRequest {
   id?: string;
   planterId: string;
@@ -168,4 +223,29 @@ export const calculateArea = (revs: number) => {
   const meters = revs * (CALCULATIONS.SHAFT_SPROCKET / CALCULATIONS.DRIVE_SPROCKET) * CALCULATIONS.WHEEL_CIRCUMFERENCE;
   const sqMeters = meters * CALCULATIONS.WIDTH;
   return sqMeters / CALCULATIONS.ACRE_CONVERSION;
+};
+
+export const getOperatingStatus = (
+  status?: 'registered_unused' | 'in_use' | 'idle' | 'maintenance'
+): 'operating' | 'maintenance' | 'idle' => {
+  if (status === 'maintenance') return 'maintenance';
+  if (status === 'in_use') return 'operating';
+  return 'idle'; // Covers 'registered_unused' and 'idle'
+};
+
+export const formatLocation = (
+  loc: string | HierarchicalLocation | undefined | null,
+  legacyFallback?: { mandal?: string; district?: string; state?: string }
+): string => {
+  if (loc) {
+    if (typeof loc === 'string') return loc;
+    return [loc.village, loc.mandal, loc.district].filter(Boolean).join(', ');
+  }
+  
+  if (legacyFallback) {
+    const parts = [legacyFallback.mandal, legacyFallback.district, legacyFallback.state].filter(Boolean);
+    if (parts.length > 0) return parts.join(', ');
+  }
+  
+  return '—';
 };

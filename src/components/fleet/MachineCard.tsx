@@ -1,9 +1,11 @@
 import React, { useState } from 'react';
-import { MapPin, User, Clock, Tractor, Image as ImageIcon, ChevronRight, Gauge, Wrench } from 'lucide-react';
+import { MapPin, User, Clock, Tractor, Image as ImageIcon, ChevronRight, Gauge, Wrench, QrCode, X } from 'lucide-react';
 import { format } from 'date-fns';
 import { cn } from '../../lib/utils';
 import { Planter, UserProfile } from '../../types';
 import { StatusBadge } from '../ui/Badge';
+import { MachineQRCode } from './MachineQRCode';
+import { AnimatePresence, motion } from 'framer-motion';
 
 interface MachineCardProps {
   planter: Planter;
@@ -31,6 +33,7 @@ export const MachineCard = ({
   onCheck,
 }: MachineCardProps) => {
   const [imgError, setImgError] = useState(false);
+  const [showQR, setShowQR] = useState(false);
   const photo = !imgError && planter.gallery?.[0];
   const area = calcArea(planter.lastReading);
 
@@ -61,7 +64,7 @@ export const MachineCard = ({
 
         {/* Status badge overlay */}
         <div className="absolute top-3 left-3">
-          <StatusBadge status={planter.operatingStatus} size="sm" />
+          <StatusBadge status={planter.status || planter.operatingStatus} size="sm" />
         </div>
 
         {/* Checkbox */}
@@ -86,6 +89,18 @@ export const MachineCard = ({
             {planter.gallery!.length}
           </div>
         )}
+
+        {/* View QR Button */}
+        <button
+          onClick={(e) => {
+            e.stopPropagation();
+            setShowQR(true);
+          }}
+          className="absolute bottom-2 left-2 flex items-center gap-1 bg-black/50 hover:bg-black/70 text-white px-2 py-0.5 rounded-full text-[10px] font-semibold transition-colors"
+        >
+          <QrCode className="w-3 h-3" />
+          QR
+        </button>
       </div>
 
       {/* Body */}
@@ -134,6 +149,42 @@ export const MachineCard = ({
           )}
         </div>
       </div>
+
+      {/* QR Code Modal */}
+      <AnimatePresence>
+        {showQR && (
+          <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
+            {/* Backdrop */}
+            <motion.div 
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={(e) => { e.stopPropagation(); setShowQR(false); }}
+              className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm"
+            />
+            {/* Modal Content */}
+            <motion.div
+              initial={{ scale: 0.95, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.95, opacity: 0 }}
+              onClick={(e) => e.stopPropagation()}
+              className="bg-white p-8 rounded-3xl shadow-2xl relative max-w-sm w-full flex flex-col items-center z-10"
+            >
+              <button 
+                onClick={(e) => { e.stopPropagation(); setShowQR(false); }}
+                className="absolute top-4 right-4 p-2 text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded-full transition-colors"
+              >
+                <X className="w-5 h-5" />
+              </button>
+              <h3 className="text-xl font-bold text-slate-900 mb-6">Machine QR Code</h3>
+              <MachineQRCode machineId={planter.id} size={200} />
+              <p className="text-sm text-slate-500 mt-6 text-center leading-relaxed">
+                Print or show this code to allow operators to quickly update the machine's status.
+              </p>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
     </div>
   );
 };

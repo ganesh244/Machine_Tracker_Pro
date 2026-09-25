@@ -2,19 +2,21 @@ import React from 'react';
 import { cn } from '../../lib/utils';
 
 // ── Status Badge ─────────────────────────────────────────────
-type OperatingStatus = 'operating' | 'maintenance' | 'idle';
+type OperatingStatus = 'operating' | 'maintenance' | 'idle' | 'registered_unused' | 'in_use';
 type SeverityLevel = 'low' | 'medium' | 'high' | 'critical';
 type UserRoleType = 'admin' | 'district_manager' | 'area_manager' | 'community_facilitator' | 'operator' | 'farm_mechanization';
 type RequestStatus = 'pending_area_manager' | 'pending_district_manager' | 'pending_farm_mech' | 'pending_admin' | 'approved' | 'in_progress' | 'completed' | 'rejected' | 'cancelled';
 
 const STATUS_CONFIG: Record<OperatingStatus, { label: string; dot: string; classes: string }> = {
-  operating:   { label: 'Operating',   dot: 'bg-emerald-500', classes: 'bg-emerald-50 text-emerald-700 border-emerald-200 ring-emerald-100' },
-  maintenance: { label: 'Maintenance', dot: 'bg-rose-500',    classes: 'bg-rose-50 text-rose-700 border-rose-200 ring-rose-100' },
-  idle:        { label: 'Idle',        dot: 'bg-slate-400',   classes: 'bg-slate-100 text-slate-600 border-slate-200 ring-slate-100' },
+  operating:         { label: 'Operating',   dot: 'bg-emerald-500', classes: 'bg-emerald-50 text-emerald-700 border-emerald-200 ring-emerald-100' },
+  in_use:            { label: 'In Use',      dot: 'bg-emerald-500', classes: 'bg-emerald-50 text-emerald-700 border-emerald-200 ring-emerald-100' },
+  maintenance:       { label: 'Maintenance', dot: 'bg-rose-500',    classes: 'bg-rose-50 text-rose-700 border-rose-200 ring-rose-100' },
+  idle:              { label: 'Idle',        dot: 'bg-slate-400',   classes: 'bg-slate-100 text-slate-600 border-slate-200 ring-slate-100' },
+  registered_unused: { label: 'New / Unused',dot: 'bg-sky-400',     classes: 'bg-sky-50 text-sky-700 border-sky-200 ring-sky-100' },
 };
 
-export const StatusBadge = ({ status, size = 'md' }: { status: OperatingStatus; size?: 'sm' | 'md' }) => {
-  const config = STATUS_CONFIG[status] || STATUS_CONFIG.idle;
+export const StatusBadge = ({ status, size = 'md' }: { status: OperatingStatus | undefined; size?: 'sm' | 'md' }) => {
+  const config = (status && STATUS_CONFIG[status]) ? STATUS_CONFIG[status] : STATUS_CONFIG.idle;
   return (
     <span className={cn(
       'inline-flex items-center gap-1.5 rounded-full border font-semibold tracking-wide',

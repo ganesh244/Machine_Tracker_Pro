@@ -58,6 +58,7 @@ import {
     Settings,
     Wrench,
     Map as MapIcon,
+    Printer,
     Crosshair,
     AlertTriangle,
     Bell,
@@ -75,7 +76,7 @@ import {
     UserPlus,
     Shield
 } from 'lucide-react';
-import { MapContainer, TileLayer, Marker, Popup, useMap } from 'react-leaflet';
+import { MapContainer, TileLayer, Marker, Popup, useMap, CircleMarker } from 'react-leaflet';
 import L from 'leaflet';
 
 // Fix Leaflet icon issue
@@ -92,12 +93,17 @@ let DefaultIcon = L.icon({
 L.Marker.prototype.options.icon = DefaultIcon;
 import { format } from 'date-fns';
 import { db, auth, storage } from './firebase';
-import { Planter, ReadingUpdate, MaintenanceLog, MaintenanceRequest, AppNotification, calculateArea, UserProfile, UserRole, Assignment, Permission, Message } from './types';
+import { Planter, ReadingUpdate, MaintenanceLog, MaintenanceRequest, AppNotification, calculateArea, UserProfile, UserRole, Assignment, Permission, Message, PreventiveMaintenanceSchedule } from './types';
 import { cn } from './lib/utils';
 import { deleteSheetDocument, getSheetInfo, syncSheetDocument, uploadDriveFile } from './lib/sheetsSync';
 import { AppShell } from './components/layout/AppShell';
 import { StatCard } from './components/dashboard/StatCard';
 import { MachineCard } from './components/fleet/MachineCard';
+import { MachineDetail } from './components/fleet/MachineDetail';
+import { QRPrintGrid } from './components/fleet/QRPrintGrid';
+import { PublicScanFlow } from './components/fleet/PublicScanFlow';
+import { AlertsPanel } from './components/dashboard/AlertsPanel';
+import { UtilizationDashboard } from './components/analytics/UtilizationDashboard';
 import { MachineFilters } from './components/fleet/MachineFilters';
 import { ToastProvider, useToast } from './components/ui/Toast';
 import { StatusBadge, RoleBadge } from './components/ui/Badge';
@@ -937,9 +943,11 @@ export default function App() {
     const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
     const [planters, setPlanters] = useState<Planter[]>([]);
     const [selectedPlanter, setSelectedPlanter] = useState<Planter | null>(null);
+    const [activeActionModal, setActiveActionModal] = useState<'update' | 'request' | 'manage' | null>(null);
     const [updates, setUpdates] = useState<ReadingUpdate[]>([]);
     const [maintenanceLogs, setMaintenanceLogs] = useState<MaintenanceLog[]>([]);
     const [maintenanceRequests, setMaintenanceRequests] = useState<MaintenanceRequest[]>([]);
+    const [maintenanceSchedules, setMaintenanceSchedules] = useState<PreventiveMaintenanceSchedule[]>([]);
     const [allMaintenanceRequests, setAllMaintenanceRequests] = useState<MaintenanceRequest[]>([]);
     const [allMaintenanceLogs, setAllMaintenanceLogs] = useState<MaintenanceLog[]>([]);
     const [notifications, setNotifications] = useState<AppNotification[]>([]);
@@ -971,7 +979,8 @@ export default function App() {
     const [assignedPage, setAssignedPage] = useState(1);
     const [unassignedPage, setUnassignedPage] = useState(1);
     const [showAddMachineModal, setShowAddMachineModal] = useState(false);
-    const [newMachineData, setNewMachineData] = useState({ id: '', type: 'Planter Pro', state: '', district: '', mandal: '', location: '', lat: '', lng: '' });
+    const [showQRPrint, setShowQRPrint] = useState(false);
+    const [newMachineData, setNewMachineData] = useState({ id: '', type: 'Planter Pro', state: '', district: '', mandal: '', location: '', lat: '', lng: '', brand: '', model: '', serialNumber: '', purchaseDate: '', purchaseCost: '', warranty: '', manualLink: '', maintenanceSchedule: '' });
     const [addMachineLoading, setAddMachineLoading] = useState(false);
     const [geocodingLoading, setGeocodingLoading] = useState(false);
 
@@ -1010,6 +1019,13 @@ export default function App() {
     useEffect(() => {
         const unsubscribe = onSnapshot(collection(db, 'maintenance_requests'), (snapshot) => {
             setAllMaintenanceRequests(snapshot.docs.map(docSnapshot => ({ ...docSnapshot.data(), id: docSnapshot.id } as MaintenanceRequest)));
+        });
+        return () => unsubscribe();
+    }, []);
+
+    useEffect(() => {
+        const unsubscribe = onSnapshot(collection(db, 'maintenance_schedules'), (snapshot) => {
+            setMaintenanceSchedules(snapshot.docs.map(docSnapshot => ({ ...docSnapshot.data(), id: docSnapshot.id } as PreventiveMaintenanceSchedule)));
         });
         return () => unsubscribe();
     }, []);
@@ -1408,7 +1424,7 @@ export default function App() {
             });
 
             if (nextStatus === 'approved') {
-                await updateDoc(doc(db, 'planters', log.planterId), { operatingStatus: 'idle' });
+                await updateDoc(doc(db, 'planters', log.planterId), { status: 'idle', operatingStatus: 'idle' });
                 void syncFirestoreDocument('planters', log.planterId);
             }
             void syncFirestoreDocument('maintenance_logs', log.id!);
@@ -1452,7 +1468,9 @@ export default function App() {
         totalArea: number;
         updateCount: number;
         topPlanters: { id: string; area: number }[];
-    }>({ totalDistance: 0, totalArea: 0, updateCount: 0, topPlanters: [] });
+        totalMaintenanceCost: number;
+        uniqueFarmers: number;
+    }>({ totalDistance: 0, totalArea: 0, updateCount: 0, topPlanters: [], totalMaintenanceCost: 0, uniqueFarmers: 0 });
     const [isReportLoading, setIsReportLoading] = useState(false);
     const [isUpdating, setIsUpdating] = useState(false);
     const [error, setError] = useState<string | null>(null);
@@ -1623,6 +1641,7 @@ export default function App() {
             setIsReportLoading(true);
             const now = new Date();
             let startDate = new Date();
+            const endDate = now;
 
             if (reportPeriod === 'daily') startDate.setHours(0, 0, 0, 0);
             else if (reportPeriod === 'weekly') startDate.setDate(now.getDate() - 7);
@@ -1653,11 +1672,21 @@ export default function App() {
                     .sort((a, b) => b.area - a.area)
                     .slice(0, 5);
 
+                const uniqueFarmers = new Set(fetchedUpdates.map(u => u.operatorName || u.updatedBy)).size;
+
+                const periodMaintenance = maintenanceLogs.filter(log => {
+                    const logDate = new Date(log.timestamp);
+                    return logDate >= startDate && logDate <= endDate;
+                });
+                const totalCost = periodMaintenance.reduce((sum, log) => sum + (log.cost || 0), 0);
+
                 setReportData({
                     totalDistance: totals.distance,
                     totalArea: totals.area,
                     updateCount: fetchedUpdates.length,
-                    topPlanters: top
+                    topPlanters: top,
+                    totalMaintenanceCost: totalCost,
+                    uniqueFarmers: uniqueFarmers
                 });
             } catch (err) {
                 console.error('Report fetch failed:', err);
@@ -1924,7 +1953,7 @@ export default function App() {
 
             if (nextStatus === 'approved') {
                 await updateDoc(doc(db, 'planters', request.planterId), {
-                    operatingStatus: 'maintenance',
+                    status: 'maintenance', operatingStatus: 'maintenance',
                     lastUpdated: new Date().toISOString()
                 });
                 void syncFirestoreDocument('planters', request.planterId);
@@ -1979,7 +2008,7 @@ export default function App() {
             });
             void syncFirestoreDocument('maintenance_requests', request.id!);
             await updateDoc(doc(db, 'planters', request.planterId), {
-                operatingStatus: 'maintenance',
+                status: 'maintenance', operatingStatus: 'maintenance',
                 lastUpdated: new Date().toISOString()
             });
             void syncFirestoreDocument('planters', request.planterId);
@@ -2021,7 +2050,7 @@ export default function App() {
             void syncFirestoreDocument('maintenance_requests', request.id!);
             if (request.status === 'approved' || request.status === 'in_progress') {
                 await updateDoc(doc(db, 'planters', request.planterId), {
-                    operatingStatus: 'idle',
+                    status: 'idle', operatingStatus: 'idle',
                     lastUpdated: new Date().toISOString()
                 });
                 void syncFirestoreDocument('planters', request.planterId);
@@ -2250,7 +2279,7 @@ export default function App() {
                     name: `Planter ${i}`,
                     type: 'Multicrop',
                     serialNumber: `SN-${1000 + i}`,
-                    operatingStatus: 'idle',
+                    status: 'idle', operatingStatus: 'idle',
                     currentHolderId: user?.uid || 'admin',
                     currentHolderRole: 'admin',
                     location: `Main Warehouse`,
@@ -2404,6 +2433,11 @@ export default function App() {
             { name: 'Idle', value: counts.idle, color: '#94a3b8' }
         ];
     }, [myPlanters]);
+
+    const scanPathMatch = window.location.pathname.match(/^\/scan\/(.+)$/);
+    if (scanPathMatch) {
+        return <PublicScanFlow machineId={scanPathMatch[1]} />;
+    }
 
     if (loading) {
         return (
@@ -2629,7 +2663,15 @@ export default function App() {
                                     const newPlanter: Planter = {
                                         id: newMachineData.id,
                                         type: newMachineData.type,
-                                        operatingStatus: 'idle',
+                                        brand: newMachineData.brand,
+                                        model: newMachineData.model,
+                                        serialNumber: newMachineData.serialNumber,
+                                        purchaseDate: newMachineData.purchaseDate,
+                                        purchaseCost: parseFloat(newMachineData.purchaseCost) || undefined,
+                                        warranty: newMachineData.warranty,
+                                        manualLink: newMachineData.manualLink,
+                                        maintenanceSchedule: newMachineData.maintenanceSchedule,
+                                        status: 'idle', operatingStatus: 'idle',
                                         currentHolderId: user.uid,
                                         currentHolderRole: userProfile?.role || 'admin',
                                         location: newMachineData.location,
@@ -2645,7 +2687,7 @@ export default function App() {
                                     await setDoc(doc(db, 'planters', newPlanter.id), newPlanter);
                                     void syncFirestoreDocumentData('planters', newPlanter.id, newPlanter as any);
                                     setShowAddMachineModal(false);
-                                    setNewMachineData({ id: '', type: 'Planter Pro', state: '', district: '', mandal: '', location: '', lat: '', lng: '' });
+                                    setNewMachineData({ id: '', type: 'Planter Pro', state: '', district: '', mandal: '', location: '', lat: '', lng: '', brand: '', model: '', serialNumber: '', purchaseDate: '', purchaseCost: '', warranty: '', manualLink: '', maintenanceSchedule: '' });
                                     createNotification({ type: 'success', title: 'Machine Registered', message: `Machine ${newPlanter.id} successfully added.` });
                                 } catch (err) {
                                     console.error(err);
@@ -2712,12 +2754,99 @@ export default function App() {
                                         />
                                     </div>
                                     <div>
-                                        <label className="text-[10px] font-bold text-[#5A5A40]/60 uppercase tracking-widest mb-1 block">Type/Model</label>
+                                        <label className="text-[10px] font-bold text-[#5A5A40]/60 uppercase tracking-widest mb-1 block">Type</label>
                                         <input
                                             required
                                             type="text"
                                             value={newMachineData.type}
                                             onChange={e => setNewMachineData(prev => ({ ...prev, type: e.target.value }))}
+                                            className="w-full bg-[#F5F5F0] p-3 border-none rounded-xl focus:ring-2 focus:ring-emerald-500"
+                                        />
+                                    </div>
+                                </div>
+
+                                <div className="grid grid-cols-2 gap-4">
+                                    <div>
+                                        <label className="text-[10px] font-bold text-[#5A5A40]/60 uppercase tracking-widest mb-1 block">Brand</label>
+                                        <input
+                                            type="text"
+                                            value={newMachineData.brand}
+                                            onChange={e => setNewMachineData(prev => ({ ...prev, brand: e.target.value }))}
+                                            className="w-full bg-[#F5F5F0] p-3 border-none rounded-xl focus:ring-2 focus:ring-emerald-500"
+                                        />
+                                    </div>
+                                    <div>
+                                        <label className="text-[10px] font-bold text-[#5A5A40]/60 uppercase tracking-widest mb-1 block">Model</label>
+                                        <input
+                                            type="text"
+                                            value={newMachineData.model}
+                                            onChange={e => setNewMachineData(prev => ({ ...prev, model: e.target.value }))}
+                                            className="w-full bg-[#F5F5F0] p-3 border-none rounded-xl focus:ring-2 focus:ring-emerald-500"
+                                        />
+                                    </div>
+                                </div>
+
+                                <div className="grid grid-cols-2 gap-4">
+                                    <div>
+                                        <label className="text-[10px] font-bold text-[#5A5A40]/60 uppercase tracking-widest mb-1 block">Serial Number</label>
+                                        <input
+                                            type="text"
+                                            value={newMachineData.serialNumber}
+                                            onChange={e => setNewMachineData(prev => ({ ...prev, serialNumber: e.target.value }))}
+                                            className="w-full bg-[#F5F5F0] p-3 border-none rounded-xl focus:ring-2 focus:ring-emerald-500"
+                                        />
+                                    </div>
+                                    <div>
+                                        <label className="text-[10px] font-bold text-[#5A5A40]/60 uppercase tracking-widest mb-1 block">Purchase Date</label>
+                                        <input
+                                            type="date"
+                                            value={newMachineData.purchaseDate}
+                                            onChange={e => setNewMachineData(prev => ({ ...prev, purchaseDate: e.target.value }))}
+                                            className="w-full bg-[#F5F5F0] p-3 border-none rounded-xl focus:ring-2 focus:ring-emerald-500"
+                                        />
+                                    </div>
+                                </div>
+                                
+                                <div className="grid grid-cols-2 gap-4">
+                                    <div>
+                                        <label className="text-[10px] font-bold text-[#5A5A40]/60 uppercase tracking-widest mb-1 block">Purchase Cost ($)</label>
+                                        <input
+                                            type="number"
+                                            step="0.01"
+                                            value={newMachineData.purchaseCost}
+                                            onChange={e => setNewMachineData(prev => ({ ...prev, purchaseCost: e.target.value }))}
+                                            className="w-full bg-[#F5F5F0] p-3 border-none rounded-xl focus:ring-2 focus:ring-emerald-500"
+                                        />
+                                    </div>
+                                    <div>
+                                        <label className="text-[10px] font-bold text-[#5A5A40]/60 uppercase tracking-widest mb-1 block">Warranty Details</label>
+                                        <input
+                                            type="text"
+                                            placeholder="e.g. 2 Years parts & labor"
+                                            value={newMachineData.warranty}
+                                            onChange={e => setNewMachineData(prev => ({ ...prev, warranty: e.target.value }))}
+                                            className="w-full bg-[#F5F5F0] p-3 border-none rounded-xl focus:ring-2 focus:ring-emerald-500"
+                                        />
+                                    </div>
+                                </div>
+
+                                <div className="grid grid-cols-2 gap-4">
+                                    <div>
+                                        <label className="text-[10px] font-bold text-[#5A5A40]/60 uppercase tracking-widest mb-1 block">Manual Link (URL)</label>
+                                        <input
+                                            type="url"
+                                            value={newMachineData.manualLink}
+                                            onChange={e => setNewMachineData(prev => ({ ...prev, manualLink: e.target.value }))}
+                                            className="w-full bg-[#F5F5F0] p-3 border-none rounded-xl focus:ring-2 focus:ring-emerald-500"
+                                        />
+                                    </div>
+                                    <div>
+                                        <label className="text-[10px] font-bold text-[#5A5A40]/60 uppercase tracking-widest mb-1 block">Maintenance Schedule</label>
+                                        <input
+                                            type="text"
+                                            placeholder="e.g. Every 100 hrs"
+                                            value={newMachineData.maintenanceSchedule}
+                                            onChange={e => setNewMachineData(prev => ({ ...prev, maintenanceSchedule: e.target.value }))}
                                             className="w-full bg-[#F5F5F0] p-3 border-none rounded-xl focus:ring-2 focus:ring-emerald-500"
                                         />
                                     </div>
@@ -2782,9 +2911,22 @@ export default function App() {
                     </div>
                 )}
             </AnimatePresence>
+            
+            <AnimatePresence>
+                {showQRPrint && (
+                    <QRPrintGrid planters={planters} onClose={() => setShowQRPrint(false)} />
+                )}
+            </AnimatePresence>
 
             <div className="space-y-6 page-enter">
-                {activeTab === 'dashboard' ? (
+                {activeTab === 'analytics' ? (
+                    <UtilizationDashboard 
+                        planters={planters}
+                        updates={updates}
+                        maintenanceLogs={maintenanceLogs}
+                        calcArea={(revs) => calcArea(revs)}
+                    />
+                ) : activeTab === 'dashboard' ? (
                     <div className="space-y-6">
                     {/* Dashboard Header */}
                     <div className="flex items-center justify-between">
@@ -3107,29 +3249,12 @@ export default function App() {
                                     </div>
                                 </div>
 
-                                {/* Notifications Summary */}
-                                <div className="bg-white rounded-[32px] p-8 border border-black/5 shadow-sm">
-                                    <h3 className="text-sm font-bold text-[#5A5A40]/40 uppercase tracking-widest mb-6">Recent Alerts</h3>
-                                    <div className="space-y-4">
-                                        {notifications.slice(0, 3).map(n => (
-                                            <div key={n.id} className="flex gap-3 items-start">
-                                                <div className={cn(
-                                                    "w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0",
-                                                    n.type === 'error' ? "bg-red-100 text-red-600" : "bg-blue-100 text-blue-600"
-                                                )}>
-                                                    {n.type === 'error' ? <AlertCircle className="w-4 h-4" /> : <Bell className="w-4 h-4" />}
-                                                </div>
-                                                <div>
-                                                    <p className="text-xs font-bold">{n.title}</p>
-                                                    <p className="text-[10px] text-[#5A5A40]/60 line-clamp-2">{n.message}</p>
-                                                </div>
-                                            </div>
-                                        ))}
-                                        {notifications.length === 0 && (
-                                            <p className="text-xs text-[#5A5A40]/40 italic">No active alerts</p>
-                                        )}
-                                    </div>
-                                </div>
+                                {/* Alerts Panel */}
+                                <AlertsPanel 
+                                    planters={filteredPlanters} 
+                                    maintenanceSchedules={maintenanceSchedules} 
+                                    maintenanceRequests={maintenanceRequests} 
+                                />
                             </div>
                         </div>
                     </div>
@@ -3242,6 +3367,29 @@ export default function App() {
                                     </button>
                                 ))}
                             </div>
+                            <button
+                                onClick={() => {
+                                    const csvContent = "data:text/csv;charset=utf-8," 
+                                        + "Metric,Value\n"
+                                        + `Period,${reportPeriod}\n`
+                                        + `Total Area (Acres),${reportData.totalArea.toFixed(1)}\n`
+                                        + `Total Distance (Km),${reportData.totalDistance.toFixed(1)}\n`
+                                        + `Reading Updates,${reportData.updateCount}\n`
+                                        + `Unique Farmers/Operators,${reportData.uniqueFarmers}\n`
+                                        + `Total Maintenance Cost,$${reportData.totalMaintenanceCost.toFixed(2)}\n`;
+                                    const encodedUri = encodeURI(csvContent);
+                                    const link = document.createElement("a");
+                                    link.setAttribute("href", encodedUri);
+                                    link.setAttribute("download", `fleet-report-${reportPeriod}.csv`);
+                                    document.body.appendChild(link);
+                                    link.click();
+                                    link.remove();
+                                }}
+                                className="ml-4 px-4 py-2 bg-[#5A5A40] text-white rounded-lg text-sm font-medium hover:bg-[#4A4A30] transition-colors flex items-center gap-2"
+                            >
+                                <FileText className="w-4 h-4" />
+                                Export CSV
+                            </button>
                         </div>
 
                         {isReportLoading ? (
@@ -3265,6 +3413,16 @@ export default function App() {
                                         <p className="text-[10px] font-bold text-[#5A5A40]/40 uppercase mb-2">Updates</p>
                                         <p className="text-4xl font-serif text-[#5A5A40]">{reportData.updateCount}</p>
                                         <p className="text-xs text-[#5A5A40]/60 mt-1">Reading submissions</p>
+                                    </div>
+                                    <div className="bg-white p-8 rounded-[32px] border border-black/5 shadow-sm">
+                                        <p className="text-[10px] font-bold text-[#5A5A40]/40 uppercase mb-2">Farmers Reached</p>
+                                        <p className="text-4xl font-serif text-[#5A5A40]">{reportData.uniqueFarmers}</p>
+                                        <p className="text-xs text-[#5A5A40]/60 mt-1">Unique operators/farmers</p>
+                                    </div>
+                                    <div className="bg-white p-8 rounded-[32px] border border-black/5 shadow-sm">
+                                        <p className="text-[10px] font-bold text-[#5A5A40]/40 uppercase mb-2">Maintenance Cost</p>
+                                        <p className="text-4xl font-serif text-rose-600">${reportData.totalMaintenanceCost.toFixed(0)}</p>
+                                        <p className="text-xs text-[#5A5A40]/60 mt-1">Total repairs in period</p>
                                     </div>
 
                                     <div className="md:col-span-3 bg-white p-8 rounded-[32px] border border-black/5 shadow-sm">
@@ -4145,14 +4303,22 @@ export default function App() {
                                         {filteredPlanters.length} <span className="font-medium">Machines Total</span>
                                     </span>
                                 </div>
-                                {hasPermission('initialize_fleet') && (
+                                <div className="flex gap-3">
                                     <button
-                                        onClick={() => setShowAddMachineModal(true)}
-                                        className="flex items-center gap-2 px-5 py-2 bg-emerald-600/10 text-emerald-700 hover:bg-emerald-600 hover:text-white rounded-xl text-xs font-bold transition-colors border border-emerald-500/20 shadow-sm"
+                                        onClick={() => setShowQRPrint(true)}
+                                        className="flex items-center gap-2 px-5 py-2 bg-white text-slate-700 hover:bg-slate-50 rounded-xl text-xs font-bold transition-colors border border-slate-200 shadow-sm"
                                     >
-                                        <Plus className="w-4 h-4" /> Register Machine
+                                        <Printer className="w-4 h-4" /> Print QR Codes
                                     </button>
-                                )}
+                                    {hasPermission('initialize_fleet') && (
+                                        <button
+                                            onClick={() => setShowAddMachineModal(true)}
+                                            className="flex items-center gap-2 px-5 py-2 bg-emerald-600/10 text-emerald-700 hover:bg-emerald-600 hover:text-white rounded-xl text-xs font-bold transition-colors border border-emerald-500/20 shadow-sm"
+                                        >
+                                            <Plus className="w-4 h-4" /> Register Machine
+                                        </button>
+                                    )}
+                                </div>
                             </div>
 
                             {selectedMachineIds.length > 0 && (
@@ -4365,383 +4531,81 @@ export default function App() {
                 )}
             </div>
 
-            {/* Detail Modal */}
+            {/* Phase 5: Machine Detail Sliding Drawer */}
+            <MachineDetail
+                planter={selectedPlanter}
+                isOpen={Boolean(selectedPlanter)}
+                onClose={closePlanterDetails}
+                calcArea={calcArea}
+                holder={allUsers.find(u => u.uid === selectedPlanter?.currentHolderId)}
+                allUsers={allUsers}
+                assignments={assignments}
+                updates={updates}
+                maintenanceRequests={maintenanceRequests}
+                maintenanceSchedules={maintenanceSchedules}
+                maintenanceLogs={maintenanceLogs}
+                canTransfer={Boolean(selectedPlanter && (selectedPlanter.currentHolderId === user.uid || hasPermission('assign_machines')))}
+                onTransferClick={() => setShowTransferModal(true)}
+                onUpdateReadingClick={selectedPlanter && (hasPermission('update_readings') || selectedPlanter.currentHolderId === user.uid) ? () => setActiveActionModal('update') : undefined}
+                onRaiseMaintenanceClick={() => setActiveActionModal('request')}
+                onManageDetailsClick={selectedPlanter && canManagePlanterMetadata(selectedPlanter) ? () => setActiveActionModal('manage') : undefined}
+            />
+
+            {/* Action Dialogs for Machine Detail */}
             <AnimatePresence>
-                {selectedPlanter && (
-                    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 sm:p-6">
+                {activeActionModal && selectedPlanter && (
+                    <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 sm:p-6 bg-slate-950/50 backdrop-blur-sm">
                         <motion.div
-                            initial={{ opacity: 0 }}
-                            animate={{ opacity: 1 }}
-                            exit={{ opacity: 0 }}
-                            onClick={() => { if (!showTransferModal) closePlanterDetails(); }}
-                            className="absolute inset-0 bg-black/60"
-                        />
-                        <motion.div
-                            key={selectedPlanter.id}
-                            initial={{ opacity: 0, scale: 0.98, y: 16 }}
+                            initial={{ opacity: 0, scale: 0.95, y: 12 }}
                             animate={{ opacity: 1, scale: 1, y: 0 }}
-                            exit={{ opacity: 0, scale: 0.98, y: 16 }}
-                            transition={{ duration: 0.18, ease: 'easeOut' }}
+                            exit={{ opacity: 0, scale: 0.95, y: 12 }}
+                            transition={{ duration: 0.2 }}
                             onClick={(e) => e.stopPropagation()}
-                            className="relative w-full max-w-4xl bg-[#F5F5F0] rounded-[40px] shadow-2xl overflow-hidden flex flex-col max-h-[90vh]"
+                            className="relative w-full max-w-xl bg-white rounded-3xl shadow-2xl p-6 sm:p-8 max-h-[90vh] overflow-y-auto border border-slate-100"
                         >
-                            {/* Modal Header */}
-                            <div className="bg-white p-8 border-b border-black/5 flex justify-between items-center">
+                            <div className="flex items-center justify-between pb-4 mb-6 border-b border-slate-100">
                                 <div>
-                                    <div className="flex items-center gap-3 mb-2">
-                                        <h2 className="text-3xl font-serif">{selectedPlanter.id}</h2>
-                                        <span className="bg-[#5A5A40]/10 text-[#5A5A40] text-xs font-bold px-3 py-1 rounded-full uppercase">
-                                            {selectedPlanter.mandal} • {selectedPlanter.district}
-                                        </span>
-                                    </div>
-                                    <p className="text-[#5A5A40]/60 flex items-center gap-2">
-                                        <MapPin className="w-4 h-4" /> {selectedPlanter.location}
-                                    </p>
+                                    <h3 className="font-bold text-slate-900 text-lg">
+                                        {activeActionModal === 'update' && 'Submit Counter Reading'}
+                                        {activeActionModal === 'request' && 'Raise Maintenance Request'}
+                                        {activeActionModal === 'manage' && 'Machine Management'}
+                                    </h3>
+                                    <p className="text-xs text-slate-400 mt-0.5 font-mono">{selectedPlanter.id}</p>
                                 </div>
-                                <div className="flex items-center gap-4">
-                                    {(selectedPlanter.currentHolderId === user.uid || hasPermission('assign_machines')) && (
-                                        <button
-                                            onClick={() => setShowTransferModal(true)}
-                                            className="hidden sm:flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-full text-xs font-bold hover:bg-blue-700 transition-colors shadow-sm"
-                                        >
-                                            <ArrowRight className="w-4 h-4" /> Transfer Machine
-                                        </button>
-                                    )}
-                                    <button
-                                        onClick={closePlanterDetails}
-                                        className="w-12 h-12 bg-[#F5F5F0] rounded-full flex items-center justify-center hover:bg-black/5 transition-colors"
-                                    >
-                                        <ChevronRight className="w-6 h-6 rotate-180" />
-                                    </button>
-                                </div>
+                                <button
+                                    onClick={() => setActiveActionModal(null)}
+                                    className="w-9 h-9 rounded-xl flex items-center justify-center text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition-colors"
+                                >
+                                    <X className="w-5 h-5" />
+                                </button>
                             </div>
 
-                            <div className="flex-1 overflow-y-auto p-8">
-                                <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-                                    {/* Left: Update Form & Gallery */}
-                                    <div className="space-y-8">
-                                        {canManagePlanterMetadata(selectedPlanter) && (
-                                            <div id="machine-management-section" className="bg-white rounded-[32px] p-8 border border-black/5 shadow-sm">
-                                                <h3 className="text-lg font-serif mb-6 flex items-center gap-2">
-                                                    <Settings className="w-5 h-5" /> Machine Management
-                                                </h3>
-                                                <div key={`${selectedPlanter.id}-details`}>
-                                                    <MachineDetailsForm
-                                                        planter={selectedPlanter}
-                                                        onSuccess={closePlanterDetails}
-                                                        createNotification={createNotification}
-                                                    />
-                                                </div>
-                                            </div>
-                                        )}
+                            {activeActionModal === 'update' && (
+                                <UpdateForm
+                                    planter={selectedPlanter}
+                                    user={user}
+                                    machineConfig={machineConfig}
+                                    onSuccess={() => setActiveActionModal(null)}
+                                />
+                            )}
 
-                                        {(hasPermission('update_readings') || selectedPlanter.currentHolderId === user.uid) && (
-                                            <div className="bg-white rounded-[32px] p-8 border border-black/5 shadow-sm">
-                                                <h3 className="text-lg font-serif mb-6 flex items-center gap-2">
-                                                    <Gauge className="w-5 h-5" /> Update Reading
-                                                </h3>
+                            {activeActionModal === 'request' && (
+                                <MaintenanceRequestForm
+                                    planter={selectedPlanter}
+                                    user={user!}
+                                    holderName={allUsers.find(u => u.uid === selectedPlanter.currentHolderId)?.displayName || selectedPlanter.currentHolderId}
+                                    onSuccess={() => setActiveActionModal(null)}
+                                    createNotification={createNotification}
+                                />
+                            )}
 
-                                                <div key={`${selectedPlanter.id}-update`}>
-                                                    <UpdateForm
-                                                        planter={selectedPlanter}
-                                                        user={user}
-                                                        machineConfig={machineConfig}
-                                                        onSuccess={closePlanterDetails}
-                                                    />
-                                                </div>
-                                            </div>
-                                        )}
-
-                                        <div className="bg-white rounded-[32px] p-8 border border-black/5 shadow-sm">
-                                            <h3 className="text-lg font-serif mb-6 flex items-center gap-2">
-                                                <ImageIcon className="w-5 h-5" /> Machine Gallery
-                                            </h3>
-                                            <GallerySection
-                                                planter={selectedPlanter}
-                                                onUpload={async (url) => {
-                                                    await updateDoc(doc(db, 'planters', selectedPlanter.id), {
-                                                        gallery: arrayUnion(url)
-                                                    });
-                                                    void syncFirestoreDocument('planters', selectedPlanter.id);
-                                                }}
-                                            />
-                                        </div>
-
-                                        {selectedPlanterPendingRepairRequest && selectedPlanter.currentHolderId === user?.uid && (
-                                            <div className="bg-white rounded-[32px] p-8 border border-black/5 shadow-sm">
-                                                <h3 className="text-lg font-serif mb-2 flex items-center gap-2">
-                                                    <Wrench className="w-5 h-5" /> Repair Completion Report
-                                                </h3>
-                                                <p className="text-sm text-[#5A5A40]/60 mb-6">
-                                                    Admin and farm mechanization marked this request as done. Add the technician work carried out on this machine.
-                                                </p>
-                                                <RepairCompletionForm
-                                                    planter={selectedPlanter}
-                                                    request={selectedPlanterPendingRepairRequest}
-                                                    user={user}
-                                                    onSuccess={() => { }}
-                                                    createNotification={createNotification}
-                                                />
-                                            </div>
-                                        )}
-
-                                        {hasPermission('perform_maintenance') && (
-                                            <div className="bg-white rounded-[32px] p-8 border border-black/5 shadow-sm">
-                                                <h3 className="text-lg font-serif mb-6 flex items-center gap-2">
-                                                    <Wrench className="w-5 h-5" /> Record Maintenance Work
-                                                </h3>
-                                                <MaintenanceLogForm
-                                                    planter={selectedPlanter}
-                                                    user={user}
-                                                    onSuccess={() => { }}
-                                                    createNotification={createNotification}
-                                                />
-                                            </div>
-                                        )}
-                                    </div>
-
-                                    {/* Right: History */}
-                                    <div className="space-y-6">
-                                        <MachineHierarchyMap planter={selectedPlanter} assignments={assignments} allUsers={allUsers} />
-
-                                        <div className="bg-white rounded-[32px] p-8 border border-black/5 shadow-sm">
-                                            <div className="flex items-center justify-between mb-6">
-                                                <h3 className="text-lg font-serif flex items-center gap-2">
-                                                    <AlertTriangle className="w-5 h-5 text-orange-500" /> Maintenance Requests
-                                                </h3>
-                                                <button
-                                                    onClick={() => setShowRequestForm(!showRequestForm)}
-                                                    className="text-[10px] font-bold uppercase tracking-wider bg-[#5A5A40]/5 hover:bg-[#5A5A40]/10 px-3 py-1.5 rounded-full transition-colors"
-                                                >
-                                                    {showRequestForm ? 'Cancel' : 'Raise Request'}
-                                                </button>
-                                            </div>
-
-                                            {showRequestForm && (
-                                                <div className="mb-6 p-4 bg-[#F5F5F0] rounded-2xl border border-[#5A5A40]/10">
-                                                    <MaintenanceRequestForm
-                                                        planter={selectedPlanter}
-                                                        user={user!}
-                                                        holderName={allUsers.find(u => u.uid === selectedPlanter.currentHolderId)?.displayName || selectedPlanter.currentHolderId}
-                                                        onSuccess={() => setShowRequestForm(false)}
-                                                        createNotification={createNotification}
-                                                    />
-                                                </div>
-                                            )}
-
-                                            <div className="space-y-4">
-                                                {maintenanceRequests.length === 0 ? (
-                                                    <div className="text-center py-8 text-[#5A5A40]/40 italic text-sm">
-                                                        No active requests
-                                                    </div>
-                                                ) : (
-                                                    maintenanceRequests.map(request => (
-                                                        <div key={request.id}>
-                                                            <MaintenanceRequestCard
-                                                                request={request}
-                                                                onApprove={canApproveMaintenanceRequest(request) ? handleApproveRequest : undefined}
-                                                                onReject={canApproveMaintenanceRequest(request) ? handleRejectRequest : undefined}
-                                                                onStart={request.status === 'approved' && canOperateMaintenanceRequest(request) ? handleStartRequestWork : undefined}
-                                                                onComplete={request.status === 'in_progress' && canOperateMaintenanceRequest(request) ? handleCompleteRequestWork : undefined}
-                                                                onCancel={canOperateMaintenanceRequest(request) ? handleCancelRequest : undefined}
-                                                            />
-                                                        </div>
-                                                    ))
-                                                )}
-                                            </div>
-                                        </div>
-
-                                        <div className="bg-white rounded-[32px] p-8 border border-black/5 shadow-sm h-full">
-                                            <h3 className="text-lg font-serif mb-6 flex items-center gap-2">
-                                                <History className="w-5 h-5" /> Recent History
-                                            </h3>
-
-                                            <div className="space-y-4">
-                                                {updates.length === 0 ? (
-                                                    <div className="text-center py-12 text-[#5A5A40]/40">
-                                                        No updates yet
-                                                    </div>
-                                                ) : (
-                                                    updates.map(update => (
-                                                        <div key={update.id} className="flex gap-4 p-4 bg-[#F5F5F0] rounded-2xl">
-                                                            <div className="w-16 h-16 bg-white rounded-xl overflow-hidden flex-shrink-0 border border-black/5">
-                                                                {update.imageUrl ? (
-                                                                    <img src={update.imageUrl} alt="Proof" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
-                                                                ) : (
-                                                                    <div className="w-full h-full flex items-center justify-center">
-                                                                        <Camera className="w-6 h-6 text-[#5A5A40]/20" />
-                                                                    </div>
-                                                                )}
-                                                            </div>
-                                                            <div className="flex-1 min-w-0">
-                                                                <div className="flex justify-between items-start mb-1">
-                                                                    <p className="text-sm font-bold">{update.newReading.toLocaleString()}</p>
-                                                                    <p className="text-[10px] text-[#5A5A40]/40">{format(new Date(update.timestamp), 'MMM d, HH:mm')}</p>
-                                                                </div>
-                                                                <p className="text-xs text-[#5A5A40]/60 mb-2">
-                                                                    +{update.areaAcres.toFixed(2)} acres
-                                                                </p>
-                                                                <div className="flex items-center gap-1 text-[10px] text-[#5A5A40]/40">
-                                                                    <UserIcon className="w-3 h-3" /> {update.updatedBy}
-                                                                </div>
-                                                            </div>
-                                                        </div>
-                                                    ))
-                                                )}
-                                            </div>
-
-                                            {selectedPlanter.operatingStatus === 'maintenance' && (
-                                                <div className="mt-8 p-6 bg-orange-50 rounded-2xl border border-orange-100">
-                                                    <h4 className="text-sm font-bold text-orange-800 flex items-center gap-2 mb-3">
-                                                        <Wrench className="w-4 h-4" /> Current Maintenance Info
-                                                    </h4>
-                                                    <div className="space-y-3">
-                                                        <div>
-                                                            <p className="text-[10px] uppercase font-bold text-orange-700/60">Problem</p>
-                                                            <p className="text-sm text-orange-900">{selectedPlanter.problemDescription || 'No description provided'}</p>
-                                                        </div>
-                                                        <div>
-                                                            <p className="text-[10px] uppercase font-bold text-orange-700/60">Action Taken</p>
-                                                            <p className="text-sm text-orange-900">{selectedPlanter.maintenanceNotes || 'No notes provided'}</p>
-                                                        </div>
-                                                    </div>
-                                                </div>
-                                            )}
-                                        </div>
-
-                                        <div className="bg-white rounded-[32px] p-8 border border-black/5 shadow-sm">
-                                            <h3 className="text-lg font-serif mb-6 flex items-center gap-2">
-                                                <Wrench className="w-5 h-5" /> Maintenance History
-                                            </h3>
-
-                                            <div className="space-y-4">
-                                                {maintenanceLogs.length === 0 ? (
-                                                    <div className="text-center py-12 text-[#5A5A40]/40">
-                                                        No maintenance logs yet
-                                                    </div>
-                                                ) : (
-                                                    maintenanceLogs.map(log => (
-                                                        <div key={log.id} className="p-4 bg-[#F5F5F0] rounded-2xl space-y-2">
-                                                            <div className="flex justify-between items-start">
-                                                                <p className="text-sm font-bold">{log.technicianName}</p>
-                                                                <div className="text-right">
-                                                                    <p className="text-[10px] text-[#5A5A40]/40">{format(new Date(log.timestamp), 'MMM d, yyyy')}</p>
-                                                                    <span className={cn(
-                                                                        "text-[8px] font-bold uppercase px-1.5 py-0.5 rounded",
-                                                                        log.approvalStatus === 'approved' ? "bg-green-100 text-green-700" :
-                                                                            log.approvalStatus === 'rejected' ? "bg-red-100 text-red-700" :
-                                                                                "bg-blue-100 text-blue-700"
-                                                                    )}>
-                                                                        {log.approvalStatus?.replace(/_/g, ' ') || 'Unknown'}
-                                                                    </span>
-                                                                </div>
-                                                            </div>
-                                                            <p className="text-xs text-[#5A5A40]/80 leading-relaxed">{log.notes}</p>
-
-                                                            {/* Approval Workflow UI */}
-                                                            {((isAdmin) ||
-                                                                (isAreaManager && log.approvalStatus === 'pending_area_manager') ||
-                                                                (isDistrictManager && log.approvalStatus === 'pending_district_manager') ||
-                                                                (isFarmMech && log.approvalStatus === 'pending_farm_mech')
-                                                            ) && log.approvalStatus !== 'approved' && log.approvalStatus !== 'rejected' && (
-                                                                    <div className="pt-2 flex gap-2">
-                                                                        <button
-                                                                            onClick={async () => {
-                                                                                const nextStatusMap: Record<string, MaintenanceLog['approvalStatus']> = {
-                                                                                    'pending_area_manager': 'pending_district_manager',
-                                                                                    'pending_district_manager': 'pending_farm_mech',
-                                                                                    'pending_farm_mech': 'approved'
-                                                                                };
-                                                                                const nextStatus = nextStatusMap[log.approvalStatus];
-
-                                                                                const nextRoleMap: Record<string, UserRole> = {
-                                                                                    'pending_area_manager': 'district_manager',
-                                                                                    'pending_district_manager': 'farm_mechanization',
-                                                                                    'pending_farm_mech': 'admin'
-                                                                                };
-                                                                                const nextRole = nextRoleMap[log.approvalStatus];
-
-                                                                                const roleKeyMap: Record<string, keyof NonNullable<MaintenanceLog['approvals']>> = {
-                                                                                    'pending_area_manager': 'areaManager',
-                                                                                    'pending_district_manager': 'districtManager',
-                                                                                    'pending_farm_mech': 'farmMechManager'
-                                                                                };
-                                                                                const roleKey = roleKeyMap[log.approvalStatus];
-
-                                                                                await updateDoc(doc(db, 'maintenance_logs', log.id!), {
-                                                                                    approvalStatus: nextStatus,
-                                                                                    [`approvals.${roleKey}`]: {
-                                                                                        approved: true,
-                                                                                        by: user.displayName || user.email,
-                                                                                        at: new Date().toISOString()
-                                                                                    }
-                                                                                });
-                                                                                void syncFirestoreDocument('maintenance_logs', log.id!);
-
-                                                                                if (nextStatus === 'approved') {
-                                                                                    await updateDoc(doc(db, 'planters', log.planterId), { operatingStatus: 'idle' });
-                                                                                    void syncFirestoreDocument('planters', log.planterId);
-                                                                                }
-
-                                                                                await createNotification({
-                                                                                    targetRole: nextRole,
-                                                                                    title: nextStatus === 'approved' ? 'Maintenance Approved' : 'Approval Required',
-                                                                                    message: nextStatus === 'approved'
-                                                                                        ? `Maintenance for ${log.planterId} has been fully approved.`
-                                                                                        : `Maintenance for ${log.planterId} requires ${nextRole?.replace(/_/g, ' ') || 'higher'} approval.`,
-                                                                                    type: nextStatus === 'approved' ? 'success' : 'info',
-                                                                                    link: log.planterId
-                                                                                });
-                                                                            }}
-                                                                            className="text-[10px] bg-green-600 text-white px-3 py-1 rounded-full hover:bg-green-700 transition-colors"
-                                                                        >
-                                                                            Approve
-                                                                        </button>
-                                                                        <button
-                                                                            onClick={async () => {
-                                                                                await updateDoc(doc(db, 'maintenance_logs', log.id!), {
-                                                                                    approvalStatus: 'rejected'
-                                                                                });
-                                                                                void syncFirestoreDocument('maintenance_logs', log.id!);
-                                                                                if (log.createdByUid) {
-                                                                                    await createNotification({
-                                                                                        userId: log.createdByUid,
-                                                                                        title: 'Maintenance Rejected',
-                                                                                        message: `Maintenance for ${log.planterId} was rejected by ${user.displayName || user.email}.`,
-                                                                                        type: 'error',
-                                                                                        link: log.planterId
-                                                                                    });
-                                                                                }
-                                                                            }}
-                                                                            className="text-[10px] bg-red-600 text-white px-3 py-1 rounded-full hover:bg-red-700 transition-colors"
-                                                                        >
-                                                                            Reject
-                                                                        </button>
-                                                                    </div>
-                                                                )}
-
-                                                            {/* Approval Progress Bar */}
-                                                            <MaintenanceProgressBar log={log} />
-                                                            {log.partsUsed && log.partsUsed.length > 0 && (
-                                                                <div className="flex flex-wrap gap-1 pt-1">
-                                                                    {log.partsUsed.map((part, i) => (
-                                                                        <span key={i} className="text-[9px] bg-white px-2 py-0.5 rounded-full border border-black/5 text-[#5A5A40]/60">
-                                                                            {part}
-                                                                        </span>
-                                                                    ))}
-                                                                </div>
-                                                            )}
-                                                            {log.cost && (
-                                                                <p className="text-[10px] font-mono text-[#5A5A40]/40 pt-1">Cost: ₹{log.cost.toLocaleString()}</p>
-                                                            )}
-                                                        </div>
-                                                    ))
-                                                )}
-                                            </div>
-                                        </div>
-                                    </div>
-                                </div>
-                            </div>
+                            {activeActionModal === 'manage' && (
+                                <MachineDetailsForm
+                                    planter={selectedPlanter}
+                                    onSuccess={() => setActiveActionModal(null)}
+                                    createNotification={createNotification}
+                                />
+                            )}
                         </motion.div>
                     </div>
                 )}
@@ -4845,7 +4709,7 @@ function MachineDetailsForm({ planter, onSuccess, createNotification }: { plante
                 mandal,
                 district,
                 state,
-                operatingStatus: status,
+                status: status, operatingStatus: status === 'maintenance' ? 'maintenance' : 'idle',
                 problemDescription: status === 'maintenance' ? problem : '',
                 maintenanceNotes: status === 'maintenance' ? notes : '',
                 lat: parsedLat,
@@ -5342,7 +5206,7 @@ function RepairCompletionForm({
             void syncFirestoreDocument('maintenance_requests', request.id!);
 
             await updateDoc(doc(db, 'planters', planter.id), {
-                operatingStatus: 'idle',
+                status: 'idle', operatingStatus: 'idle',
                 maintenanceNotes: notes.trim(),
                 problemDescription: request.description,
                 lastUpdated: new Date().toISOString()
@@ -5534,6 +5398,9 @@ function UpdateForm({ planter, user, machineConfig, onSuccess }: {
     onSuccess: () => void
 }) {
     const [newReading, setNewReading] = useState('');
+    const [fuelConsumed, setFuelConsumed] = useState('');
+    const [operatorName, setOperatorName] = useState('');
+    const [weatherNotes, setWeatherNotes] = useState('');
     const [image, setImage] = useState<File | null>(null);
     const [preview, setPreview] = useState<string | null>(null);
     const [isSubmitting, setIsSubmitting] = useState(false);
@@ -5613,13 +5480,16 @@ function UpdateForm({ planter, user, machineConfig, onSuccess }: {
                 }
             }
 
-            // 2. Create Update Record
             const updateData: ReadingUpdate = {
                 planterId: planter.id,
+                type: 'reading',
                 previousReading: Number(planter.lastReading) || 0,
                 newReading: Number(newReading) || 0,
                 distanceKm: Number(distance) || 0,
                 areaAcres: Number(area) || 0,
+                fuelConsumed: Number(fuelConsumed) || 0,
+                operatorName: operatorName,
+                weatherNotes: weatherNotes,
                 imageUrl: imageUrl || '',
                 timestamp: new Date().toISOString(),
                 updatedBy: user.displayName || user.email || 'Unknown'
@@ -5687,6 +5557,39 @@ function UpdateForm({ planter, user, machineConfig, onSuccess }: {
                 </motion.div>
             )}
 
+            <div className="grid grid-cols-2 gap-4">
+                <div className="p-4 bg-[#5A5A40]/5 rounded-2xl border border-[#5A5A40]/10">
+                    <p className="text-[10px] uppercase text-[#5A5A40]/40 font-bold mb-1">Fuel Consumed (Liters)</p>
+                    <input
+                        type="number"
+                        value={fuelConsumed}
+                        onChange={(e) => setFuelConsumed(e.target.value)}
+                        placeholder="e.g. 50"
+                        className="w-full bg-transparent border-none p-0 text-lg font-bold focus:ring-0 placeholder:text-[#5A5A40]/20"
+                    />
+                </div>
+                <div className="p-4 bg-[#5A5A40]/5 rounded-2xl border border-[#5A5A40]/10">
+                    <p className="text-[10px] uppercase text-[#5A5A40]/40 font-bold mb-1">Operator Name</p>
+                    <input
+                        type="text"
+                        value={operatorName}
+                        onChange={(e) => setOperatorName(e.target.value)}
+                        placeholder="e.g. John Doe"
+                        className="w-full bg-transparent border-none p-0 text-lg font-bold focus:ring-0 placeholder:text-[#5A5A40]/20"
+                    />
+                </div>
+            </div>
+
+            <div className="p-4 bg-[#5A5A40]/5 rounded-2xl border border-[#5A5A40]/10">
+                <p className="text-[10px] uppercase text-[#5A5A40]/40 font-bold mb-1">Weather / Notes</p>
+                <textarea
+                    value={weatherNotes}
+                    onChange={(e) => setWeatherNotes(e.target.value)}
+                    placeholder="e.g. Rainy morning, soil was wet"
+                    className="w-full bg-transparent border-none p-0 text-sm focus:ring-0 placeholder:text-[#5A5A40]/20 resize-none h-16"
+                />
+            </div>
+
             <div className="space-y-2">
                 <p className="text-[10px] uppercase text-[#5A5A40]/40 font-bold">Image Proof <span className="normal-case font-normal text-[#5A5A40]/30">(optional)</span></p>
                 <label className="block">
@@ -5739,52 +5642,123 @@ function UpdateForm({ planter, user, machineConfig, onSuccess }: {
 
 function MapView({ planters, onSelect, allUsers }: { planters: Planter[], onSelect: (p: Planter) => void, allUsers: UserProfile[] }) {
     const center: [number, number] = [20.5937, 78.9629]; // Center of India
+    const [showHeatmap, setShowHeatmap] = useState(false);
+
+    // Create custom SVG icons for different statuses
+    const createIcon = (color: string) => L.divIcon({
+        className: 'custom-leaflet-icon',
+        html: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="${color}" width="32" height="32" stroke="white" stroke-width="2">
+                 <path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5c-1.38 0-2.5-1.12-2.5-2.5s1.12-2.5 2.5-2.5 2.5 1.12 2.5 2.5-1.12 2.5-2.5 2.5z"/>
+               </svg>`,
+        iconSize: [32, 32],
+        iconAnchor: [16, 32],
+        popupAnchor: [0, -32],
+    });
+
+    const activeIcon = createIcon('#10b981'); // emerald-500
+    const idleIcon = createIcon('#f59e0b'); // amber-500
+    const maintenanceIcon = createIcon('#ef4444'); // rose-500
+    const newIcon = createIcon('#38bdf8'); // sky-400
+    const defaultIcon = createIcon('#64748b'); // slate-500
+
+    const getMarkerIcon = (status: string) => {
+        switch (status) {
+            case 'operating': 
+            case 'in_use': return activeIcon;
+            case 'idle': return idleIcon;
+            case 'registered_unused': return newIcon;
+            case 'maintenance': return maintenanceIcon;
+            default: return defaultIcon;
+        }
+    };
 
     return (
-        <MapContainer
-            center={center}
-            zoom={5}
-            className="w-full h-full z-0"
-            scrollWheelZoom={true}
-        >
-            <TileLayer
-                attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
-                url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
-            />
-            {planters.filter(planter => planter.lat !== undefined && planter.lat !== null && planter.lng !== undefined && planter.lng !== null).map(planter => (
-                <Marker
-                    key={planter.id}
-                    position={[planter.lat!, planter.lng!]}
+        <div className="w-full h-full relative">
+            <div className="absolute top-4 right-4 z-[400] bg-white p-2 rounded-xl shadow-lg border border-slate-200 flex items-center gap-2">
+                <span className="text-xs font-bold text-slate-700">Usage Heatmap</span>
+                <button 
+                    onClick={() => setShowHeatmap(!showHeatmap)}
+                    className={cn(
+                        "w-10 h-5 rounded-full transition-colors relative",
+                        showHeatmap ? "bg-emerald-500" : "bg-slate-300"
+                    )}
                 >
-                    <Popup>
-                        <div className="p-2 min-w-[200px]">
-                            <div className="flex justify-between items-start mb-2">
-                                <h3 className="font-serif text-lg m-0">{planter.id}</h3>
-                                <span className={cn(
-                                    "text-[8px] uppercase font-bold px-1.5 py-0.5 rounded",
-                                    planter.operatingStatus === 'operating' ? "bg-green-100 text-green-700" :
-                                        planter.operatingStatus === 'maintenance' ? "bg-orange-100 text-orange-700" :
-                                            "bg-gray-100 text-gray-700"
-                                )}>
-                                    {planter.operatingStatus}
-                                </span>
-                            </div>
-                            <div className="space-y-1 text-xs text-[#5A5A40]/60 mb-3">
-                                <p className="flex items-center gap-1"><UserIcon className="w-3 h-3" /> {allUsers.find(u => u.uid === planter.currentHolderId)?.displayName || 'Unknown'}</p>
-                                <p className="flex items-center gap-1"><MapPin className="w-3 h-3" /> {planter.location}</p>
-                                <p className="font-mono">{calculateArea(planter.lastReading).toFixed(1)} acres covered</p>
-                            </div>
-                            <button
-                                onClick={() => onSelect(planter)}
-                                className="w-full bg-[#5A5A40] text-white py-1.5 rounded-lg text-xs font-medium hover:bg-[#4A4A30] transition-colors"
-                            >
-                                View Details
-                            </button>
-                        </div>
-                    </Popup>
-                </Marker>
-            ))}
-        </MapContainer>
+                    <div className={cn(
+                        "w-4 h-4 bg-white rounded-full absolute top-0.5 transition-transform",
+                        showHeatmap ? "translate-x-5" : "translate-x-0.5"
+                    )} />
+                </button>
+            </div>
+            <MapContainer
+                center={center}
+                zoom={5}
+                className="w-full h-full z-0"
+                scrollWheelZoom={true}
+            >
+                <TileLayer
+                    attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+                    url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+                />
+                {planters.filter(planter => planter.lat !== undefined && planter.lat !== null && planter.lng !== undefined && planter.lng !== null).map(planter => {
+                    const area = calculateArea(planter.lastReading);
+                    const position: [number, number] = [planter.lat!, planter.lng!];
+                    
+                    return showHeatmap ? (
+                        <CircleMarker
+                            key={planter.id}
+                            center={position}
+                            radius={Math.max(10, Math.min(50, area / 10))}
+                            pathOptions={{
+                                color: '#ef4444',
+                                fillColor: '#ef4444',
+                                fillOpacity: 0.6,
+                                weight: 0
+                            }}
+                        >
+                            <Popup>
+                                <div className="p-2">
+                                    <h3 className="font-serif font-bold text-lg">{planter.id}</h3>
+                                    <p className="text-sm font-mono mt-1">{area.toFixed(1)} acres total usage</p>
+                                </div>
+                            </Popup>
+                        </CircleMarker>
+                    ) : (
+                        <Marker
+                            key={planter.id}
+                            position={position}
+                            icon={getMarkerIcon(planter.status || planter.operatingStatus)}
+                        >
+                            <Popup>
+                                <div className="p-2 min-w-[200px]">
+                                    <div className="flex justify-between items-start mb-2">
+                                        <h3 className="font-serif text-lg m-0">{planter.id}</h3>
+                                        <span className={cn(
+                                            "text-[8px] uppercase font-bold px-1.5 py-0.5 rounded",
+                                            planter.operatingStatus === 'operating' ? "bg-emerald-100 text-emerald-700" :
+                                                planter.operatingStatus === 'maintenance' ? "bg-rose-100 text-rose-700" :
+                                                    "bg-amber-100 text-amber-700"
+                                        )}>
+                                            {planter.operatingStatus}
+                                        </span>
+                                    </div>
+                                    <div className="space-y-1 text-xs text-[#5A5A40]/60 mb-3">
+                                        <p className="flex items-center gap-1"><UserIcon className="w-3 h-3" /> {allUsers.find(u => u.uid === planter.currentHolderId)?.displayName || 'Unknown'}</p>
+                                        <p className="flex items-center gap-1"><MapPin className="w-3 h-3" /> {planter.location}</p>
+                                        <p className="font-mono">{area.toFixed(1)} acres covered</p>
+                                    </div>
+                                    <button
+                                        onClick={() => onSelect(planter)}
+                                        className="w-full bg-[#5A5A40] text-white py-1.5 rounded-lg text-xs font-medium hover:bg-[#4A4A30] transition-colors"
+                                    >
+                                        View Details
+                                    </button>
+                                </div>
+                            </Popup>
+                        </Marker>
+                    );
+                })}
+            </MapContainer>
+        </div>
     );
 }
 
