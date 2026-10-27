@@ -1,6 +1,7 @@
 import type { UserProfile } from '../types';
 
-export const isLocalDemo = import.meta.env.VITE_LOCAL_DEMO === 'true' || (import.meta.env.DEV && import.meta.env.VITE_SKIP_LOCAL_LOGIN === 'true');
+const env = (import.meta as any).env || {};
+export const isLocalDemo = env.VITE_LOCAL_DEMO === 'true' || (env.VITE_LOCAL_DEMO !== 'false' && env.DEV && env.VITE_SKIP_LOCAL_LOGIN === 'true');
 export const DEMO_STORE_KEY = 'machine-tracker-demo-v1';
 export const DEMO_SESSION_KEY = 'machine-tracker-demo-user';
 export const demoUsers: UserProfile[] = [

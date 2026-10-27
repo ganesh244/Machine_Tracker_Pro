@@ -1,5 +1,6 @@
+import { isRemoteBrowser, remoteCommand } from './backendClient';
 import { collection, doc, getDoc, getDocs, writeBatch } from './data';
-import { db } from '../firebase';
+import { db } from './database';
 import { branchIds, reportingAncestors, canManageMachine, type FieldMachine } from './fieldOperations';
 import { raiseMaintenance } from './maintenance';
 import type { UserProfile } from '../types';
@@ -28,6 +29,7 @@ export function canSeeSeason(actor:UserProfile,schedule:SeasonSchedule,users:Use
 export function canManageSeason(actor:UserProfile,schedule:SeasonSchedule){return ['admin','farm_mechanization'].includes(actor.role)||actor.role==='district_manager'&&schedule.ownerId===actor.uid;}
 export function canInspectSeason(actor:UserProfile,schedule:SeasonSchedule,users:UserProfile[]){return !schedule.archived&&['cf','jcf','area_manager','district_manager'].includes(actor.role)&&canSeeSeason(actor,schedule,users);}
 export async function createSeasonSchedule(actor:UserProfile,details:Omit<SeasonSchedule,'id'|'ownerId'|'createdAt'>){
+ if(isRemoteBrowser)return remoteCommand('createSeasonSchedule',[details]);
  await verify(actor);if(!['admin','district_manager','farm_mechanization'].includes(actor.role))throw new Error('Admin, District Managers and the Farm Mechanization Team set seasonal alert dates.');
  const users=await profiles(), own=userSeasonLocation(actor,users), state=(details.state||own.state).trim(),district=details.district.trim();
  if(!details.name.trim()||!state||!district)throw new Error('Enter season name, state and district.');
@@ -42,6 +44,7 @@ export async function createSeasonSchedule(actor:UserProfile,details:Omit<Season
  const commit=writeBatch(db);commit.set(doc(db,'season_schedules',id),schedule);await commit.commit();await dispatchSeasonAlerts();return schedule;
 }
 export async function updateSeasonSchedule(actor:UserProfile,id:string,details:Pick<SeasonSchedule,'name'|'seasonStart'|'seasonEnd'|'preAlertDate'|'postAlertDate'>){
+ if(isRemoteBrowser)return remoteCommand('updateSeasonSchedule',[id,details]);
  await verify(actor);const snapshot=await getDoc(doc(db,'season_schedules',id));
  if(!snapshot.exists())throw new Error('Season schedule not found.');
  const schedule=snapshot.data() as SeasonSchedule;
@@ -52,6 +55,7 @@ export async function updateSeasonSchedule(actor:UserProfile,id:string,details:P
  const commit=writeBatch(db);commit.set(doc(db,'season_schedules',id),updated);await commit.commit();await dispatchSeasonAlerts();return updated;
 }
 export async function archiveSeasonSchedule(actor:UserProfile,id:string,archived:boolean){
+ if(isRemoteBrowser)return remoteCommand('archiveSeasonSchedule',[id,archived]);
  await verify(actor);const snapshot=await getDoc(doc(db,'season_schedules',id));
  if(!snapshot.exists())throw new Error('Season schedule not found.');
  const schedule=snapshot.data() as SeasonSchedule;
@@ -63,7 +67,7 @@ export async function archiveSeasonSchedule(actor:UserProfile,id:string,archived
  await commit.commit();if(!archived)await dispatchSeasonAlerts();
 }
 let dispatching:Promise<void>|undefined;
-export function dispatchSeasonAlerts(now=new Date()){return dispatching ||=dispatch(now).finally(()=>{dispatching=undefined;});}
+export function dispatchSeasonAlerts(now=new Date()){if(isRemoteBrowser)return remoteCommand('dispatchSeasonAlerts');if(typeof window==='undefined')return dispatch(now);return dispatching ||=dispatch(now).finally(()=>{dispatching=undefined;});}
 async function dispatch(now:Date){
  const [users,schedules]=await Promise.all([profiles(),getDocs(collection(db,'season_schedules'))]);const commit=writeBatch(db);let count=0;
  for(const snapshot of schedules.docs){const schedule=snapshot.data() as SeasonSchedule;if(schedule.archived)continue;
@@ -77,6 +81,7 @@ async function dispatch(now:Date){
  if(count)await commit.commit();
 }
 export async function saveSeasonInspection(actor:UserProfile,details:{scheduleId:string;machineId:string;scannedQRId:string;phase:'pre'|'post';checks:Record<string,boolean>;notes:string;photos:string[];estimatedCost:number}){
+ if(isRemoteBrowser)return remoteCommand('saveSeasonInspection',[details]);
  await verify(actor);if(!['cf','jcf','area_manager','district_manager'].includes(actor.role))throw new Error('CF/JCF and Area / District Managers complete seasonal inspections.');
  const [users,scheduleDoc,machineDoc]=await Promise.all([profiles(),getDoc(doc(db,'season_schedules',details.scheduleId)),getDoc(doc(db,'planters',details.machineId))]);
  if(!scheduleDoc.exists()||!machineDoc.exists())throw new Error('Choose an existing schedule and machine.');

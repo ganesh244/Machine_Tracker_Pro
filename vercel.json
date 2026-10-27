@@ -4,8 +4,13 @@
   "outputDirectory": "dist",
   "rewrites": [
     {
-      "source": "/((?!assets/|.*\\.[^/]+$).*)",
+      "source": "/((?!api(?:/|$)|assets/|.*\\.[^/]+$).*)",
       "destination": "/index.html"
     }
-  ]
+  ],
+  "functions": {
+    "api/gateway.ts": {
+      "maxDuration": 30
+    }
+  }
 }

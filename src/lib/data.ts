@@ -1,5 +1,8 @@
 // Keep the existing data API while routing the local demo to browser storage.
-import * as firestore from 'firebase/firestore';
+import { backendRequest, isRemoteBrowser } from './backendClient';
+export interface ServerStore { records:Record<string,any>; changed:Set<string> }
+let serverProvider:(()=>ServerStore)|undefined;
+export function configureServerStore(provider:()=>ServerStore){serverProvider=provider;}
 import { isLocalDemo, DEMO_STORE_KEY, seedDemo, upgradeDemoRoles } from './demo';
 
 type LocalRef = { path: string; kind: 'doc' | 'collection'; constraints?: any[]; id: string };
@@ -7,6 +10,7 @@ let records: Record<string, any> | undefined;
 const listeners = new Set<() => void>();
 const clone = (value: any) => value === undefined ? undefined : structuredClone(value);
 function store() {
+  if(serverProvider)return serverProvider().records;
   if (!records) {
     const saved = localStorage.getItem(DEMO_STORE_KEY);
     records = saved ? JSON.parse(saved) : seedDemo();
@@ -16,6 +20,7 @@ function store() {
   return records!;
 }
 function persist(next: Record<string, any>) {
+  if(serverProvider){const context=serverProvider();for(const path of new Set([...Object.keys(context.records),...Object.keys(next)]))if(JSON.stringify(context.records[path])!==JSON.stringify(next[path]))context.changed.add(path);context.records=next;return;}
   localStorage.setItem(DEMO_STORE_KEY, JSON.stringify(next));
   records = next;
   listeners.forEach(listener => listener());
@@ -86,34 +91,39 @@ function apply(previous: any, values: any) {
   }
   return next;
 }
-const choose = <T,>(remote: T, local: any): T => isLocalDemo ? local : remote;
-export const collection = choose<typeof firestore.collection>(firestore.collection, (parent: any, ...parts: string[]) => reference('collection', parent, ...parts));
-export const doc = choose<typeof firestore.doc>(firestore.doc, (parent: any, ...parts: string[]) => reference('doc', parent, ...(parts.length ? parts : [crypto.randomUUID()])));
-export const query = choose<typeof firestore.query>(firestore.query, (ref: LocalRef, ...constraints: any[]) => ({ ...ref, constraints }));
-export const where = choose<typeof firestore.where>(firestore.where, (...args: any[]) => ({ type: 'where', args }));
-export const orderBy = choose<typeof firestore.orderBy>(firestore.orderBy, (...args: any[]) => ({ type: 'orderBy', args }));
-export const limit = choose<typeof firestore.limit>(firestore.limit, (...args: any[]) => ({ type: 'limit', args }));
-export const getDoc = choose<typeof firestore.getDoc>(firestore.getDoc, async (ref: LocalRef) => result(ref));
-export const getDocs = choose<typeof firestore.getDocs>(firestore.getDocs, async (ref: LocalRef) => result(ref));
-export const onSnapshot = choose<typeof firestore.onSnapshot>(firestore.onSnapshot, (ref: LocalRef, callback: any, onError?: any) => {
+const choose = (remote:any, local:any):any => isRemoteBrowser ? remote : local;
+const remoteSnapshot=(row:any)=>snapshot(row.path,row.value);
+async function remoteRead(ref:LocalRef){const response=await backendRequest('read',{ref});if(ref.kind==='doc')return remoteSnapshot(response);const docs=response.rows.map(remoteSnapshot);return {docs,size:docs.length,empty:!docs.length,forEach:(callback:any)=>docs.forEach(callback)};}
+function remoteSubscribe(ref:LocalRef,callback:any,onError?:any){let active=true;const emit=()=>{remoteRead(ref).then(result=>{if(active)(typeof callback==='function'?callback:callback.next)(result);}).catch(error=>{if(active)onError?.(error);});};emit();const timer=setInterval(emit,15000);window.addEventListener('farmmech-data-changed',emit);return()=>{active=false;clearInterval(timer);window.removeEventListener('farmmech-data-changed',emit);};}
+const denied=async()=>{throw new Error('Direct writes are disabled. Use an authorised workflow.');};
+const remoteApi:any={collection:(parent:any,...parts:string[])=>reference('collection',parent,...parts),doc:(parent:any,...parts:string[])=>reference('doc',parent,...parts),query:(ref:LocalRef,...constraints:any[])=>({...ref,constraints}),where:(...args:any[])=>({type:'where',args}),orderBy:(...args:any[])=>({type:'orderBy',args}),limit:(...args:any[])=>({type:'limit',args}),getDoc:remoteRead,getDocs:remoteRead,onSnapshot:remoteSubscribe,setDoc:denied,addDoc:denied,deleteDoc:denied,updateDoc:async(ref:LocalRef,value:any)=>{await backendRequest('notificationRead',{path:ref.path,value});window.dispatchEvent(new Event('farmmech-data-changed'));},arrayUnion:(...value:any[])=>({__local:'arrayUnion',value}),increment:(value:number)=>({__local:'increment',value}),writeBatch:()=>({set:denied,update:denied,delete:denied,commit:denied})};
+export const collection = choose(remoteApi.collection, (parent: any, ...parts: string[]) => reference('collection', parent, ...parts));
+export const doc = choose(remoteApi.doc, (parent: any, ...parts: string[]) => reference('doc', parent, ...(parts.length ? parts : [crypto.randomUUID()])));
+export const query = choose(remoteApi.query, (ref: LocalRef, ...constraints: any[]) => ({ ...ref, constraints }));
+export const where = choose(remoteApi.where, (...args: any[]) => ({ type: 'where', args }));
+export const orderBy = choose(remoteApi.orderBy, (...args: any[]) => ({ type: 'orderBy', args }));
+export const limit = choose(remoteApi.limit, (...args: any[]) => ({ type: 'limit', args }));
+export const getDoc = choose(remoteApi.getDoc, async (ref: LocalRef) => result(ref));
+export const getDocs = choose(remoteApi.getDocs, async (ref: LocalRef) => result(ref));
+export const onSnapshot = choose(remoteApi.onSnapshot, (ref: LocalRef, callback: any, onError?: any) => {
   let active = true;
   const emit = () => { if (active) { try { (typeof callback === 'function' ? callback : callback.next)(result(ref)); } catch (error) { if (onError) onError(error); else console.error(error); } } };
   listeners.add(emit); queueMicrotask(emit);
   return () => { active = false; listeners.delete(emit); };
 });
-export const setDoc = choose<typeof firestore.setDoc>(firestore.setDoc, async (ref: LocalRef, value: any, options?: any) => persist({ ...store(), [ref.path]: apply(options?.merge ? store()[ref.path] : {}, value) }));
-export const updateDoc = choose<typeof firestore.updateDoc>(firestore.updateDoc, async (ref: LocalRef, value: any) => {
+export const setDoc = choose(remoteApi.setDoc, async (ref: LocalRef, value: any, options?: any) => persist({ ...store(), [ref.path]: apply(options?.merge ? store()[ref.path] : {}, value) }));
+export const updateDoc = choose(remoteApi.updateDoc, async (ref: LocalRef, value: any) => {
   if (!store()[ref.path]) throw new Error('Record no longer exists.');
   persist({ ...store(), [ref.path]: apply(store()[ref.path], value) });
 });
-export const deleteDoc = choose<typeof firestore.deleteDoc>(firestore.deleteDoc, async (ref: LocalRef) => { const next = { ...store() }; delete next[ref.path]; persist(next); });
-export const addDoc = choose<typeof firestore.addDoc>(firestore.addDoc, async (ref: LocalRef, value: any) => {
+export const deleteDoc = choose(remoteApi.deleteDoc, async (ref: LocalRef) => { const next = { ...store() }; delete next[ref.path]; persist(next); });
+export const addDoc = choose(remoteApi.addDoc, async (ref: LocalRef, value: any) => {
   const target = reference('doc', ref, crypto.randomUUID());
   persist({ ...store(), [target.path]: apply({}, value) }); return target;
 });
-export const arrayUnion = choose<typeof firestore.arrayUnion>(firestore.arrayUnion, (...value: any[]) => ({ __local: 'arrayUnion', value }));
-export const increment = choose<typeof firestore.increment>(firestore.increment, (value: number) => ({ __local: 'increment', value }));
-export const writeBatch = choose<typeof firestore.writeBatch>(firestore.writeBatch, () => {
+export const arrayUnion = choose(remoteApi.arrayUnion, (...value: any[]) => ({ __local: 'arrayUnion', value }));
+export const increment = choose(remoteApi.increment, (value: number) => ({ __local: 'increment', value }));
+export const writeBatch = choose(remoteApi.writeBatch, () => {
   const operations: any[] = [];
   const batch = {
     set: (ref: LocalRef, value: any, options?: any) => { operations.push({ type: 'set', ref, value, options }); return batch; },

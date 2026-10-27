@@ -1,5 +1,5 @@
 import { doc, getDoc, writeBatch } from './data';
-import { db } from '../firebase';
+import { db } from './database';
 import { isLocalDemo, demoUsers } from './demo';
 import { APPROVAL_CHAIN } from './maintenance';
 

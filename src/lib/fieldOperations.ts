@@ -1,5 +1,6 @@
+import { isRemoteBrowser, remoteCommand } from './backendClient';
 import { collection, doc, getDoc, getDocs, writeBatch } from './data';
-import { db } from '../firebase';
+import { db } from './database';
 import type { Planter, UserProfile, UserRole } from '../types';
 
 export const MACHINE_TYPES = ['MCP', 'Drum seeder', 'Laser land leveller', 'Other'] as const;
@@ -59,6 +60,7 @@ async function machineFor(actor: UserProfile, id: string): Promise<FieldMachine>
 }
 
 export async function createQRBatch(actor: UserProfile, name: string, quantity: number): Promise<QRBatch> {
+ if(isRemoteBrowser)return remoteCommand('createQRBatch',[name,quantity]);
   if (actor.role !== 'admin') throw new Error('Only the Admin team can generate QR labels.');
   required(name, 'Batch name');
   if (!Number.isInteger(quantity) || quantity < 1 || quantity > 200) throw new Error('Generate between 1 and 200 labels per batch.');
@@ -78,6 +80,7 @@ export async function createQRBatch(actor: UserProfile, name: string, quantity: 
 
 /** Extend a batch without changing any distributed or attached label. */
 export async function addBatchStickers(actor:UserProfile,batchId:string,quantity:number){
+ if(isRemoteBrowser)return remoteCommand('addBatchStickers',[batchId,quantity]);
  const profile=await getDoc(doc(db,'users',actor.uid));
  if(!profile.exists()||profile.data().role!=='admin'||actor.role!=='admin')throw new Error('Only the Admin team can add stickers.');
  if(!Number.isInteger(quantity)||quantity<1||quantity>200)throw new Error('Add between 1 and 200 stickers at a time.');
@@ -99,6 +102,7 @@ export async function addBatchStickers(actor:UserProfile,batchId:string,quantity
 }
 
 export async function distributeQRLabels(actor: UserProfile, labelIds: string[], recipientId: string) {
+ if(isRemoteBrowser)return remoteCommand('distributeQRLabels',[labelIds,recipientId]);
   const users = await usersList();
   const recipient = users.find(user => user.uid === recipientId);
   if (!recipient || !canReceiveLabels(actor, recipient, users)) throw new Error('Choose a manager in the next level of your reporting team.');
@@ -117,6 +121,7 @@ export async function distributeQRLabels(actor: UserProfile, labelIds: string[],
 }
 
 export async function onboardFieldMachine(actor: UserProfile, labelId: string, details: FieldLocation & { machineType: string; brand: string; model: string; serialNumber: string; cfId: string; photos: string[] }) {
+ if(isRemoteBrowser)return remoteCommand('onboardFieldMachine',[labelId,details]);
   if (!['area_manager', 'district_manager'].includes(actor.role)) throw new Error('An Area or District Manager must onboard the machine.');
   const profile = await getDoc(doc(db, 'users', actor.uid));
   if (!profile.exists() || profile.data().role !== actor.role) throw new Error('Your role changed. Reload your account.');
@@ -145,6 +150,7 @@ export async function onboardFieldMachine(actor: UserProfile, labelId: string, d
 }
 
 export async function onboardLeadFarmer(actor: UserProfile, machineId: string, details: FieldLocation & { name: string; phone: string; landAcres: number; photos: string[] }) {
+ if(isRemoteBrowser)return remoteCommand('onboardLeadFarmer',[machineId,details]);
   if (!['cf', 'jcf', 'area_manager'].includes(actor.role)) throw new Error('The assigned CF, JCF or Area Manager must onboard the lead farmer.');
   const machine = await machineFor(actor, machineId);
   if (machine.leadFarmerId) throw new Error('This machine already has a lead farmer. Record a usage visit instead.');
@@ -162,6 +168,7 @@ export async function onboardLeadFarmer(actor: UserProfile, machineId: string, d
 }
 
 export async function recordFarmerUsage(actor: UserProfile, machineId: string, details: Omit<FieldUsage, 'id' | 'machineId' | 'leadFarmerId' | 'recordedBy' | 'recordedByName' | 'createdAt'>) {
+ if(isRemoteBrowser)return remoteCommand('recordFarmerUsage',[machineId,details]);
   if (!['cf', 'jcf', 'area_manager'].includes(actor.role)) throw new Error('A CF, JCF or Area Manager must record field usage.');
   const machine = await machineFor(actor, machineId);
   if (!machine.leadFarmerId) throw new Error('Onboard the lead farmer before recording usage.');
@@ -183,6 +190,7 @@ export async function recordFarmerUsage(actor: UserProfile, machineId: string, d
 }
 
 export async function assignResponsibleCF(actor: UserProfile, machineId: string, cfId: string) {
+ if(isRemoteBrowser)return remoteCommand('assignResponsibleCF',[machineId,cfId]);
   if (!['area_manager','district_manager'].includes(actor.role)) throw new Error('Only Area or District Managers assign machines.');
   const machine = await machineFor(actor,machineId), users = await usersList(), cf = users.find(user=>user.uid===cfId&&user.role==='cf');
   if (!cf || !branchIds(users,actor.uid).has(cf.uid) || (actor.role==='district_manager'&&cf.parentId!==actor.uid)) throw new Error('Select a CF reporting directly to your team.');

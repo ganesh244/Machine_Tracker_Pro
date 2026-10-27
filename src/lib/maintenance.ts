@@ -1,5 +1,6 @@
+import { isRemoteBrowser, remoteCommand } from './backendClient';
 import { collection, doc, getDoc, getDocs, writeBatch } from './data';
-import { db } from '../firebase';
+import { db } from './database';
 import { canManageMachine, reportingAncestors, ROLE_NAMES, type FieldMachine } from './fieldOperations';
 import type { MaintenanceRequest, MaintenanceLog, UserProfile, UserRole } from '../types';
 
@@ -68,6 +69,7 @@ function notify(commit: ReturnType<typeof writeBatch>, users: UserProfile[], rol
 const active = (request: { status: string }) => !['completed', 'rejected', 'cancelled'].includes(request.status);
 
 export async function raiseMaintenance(actor: UserProfile, machineId: string, details: { requestType: 'repair' | 'regular_service'; severity: MaintenanceRequest['severity']; description: string; partDamaged: string; estimatedCost: number; photos: string[]; machineStopped: boolean }) {
+ if(isRemoteBrowser)return remoteCommand('raiseMaintenance',[machineId,details]);
   if (!['cf', 'jcf', 'area_manager', 'district_manager'].includes(actor.role)) throw new Error('Field staff or their Area / District Manager must raise the request.');
   const { machine, users } = await context(actor, machineId);
   if (details.description.trim().length < 10) throw new Error('Describe the problem in at least 10 characters.');
@@ -85,6 +87,7 @@ export async function raiseMaintenance(actor: UserProfile, machineId: string, de
 }
 
 export async function reviewMaintenance(actor: UserProfile, requestId: string, decision: 'approve' | 'reject', note: string) {
+ if(isRemoteBrowser)return remoteCommand('reviewMaintenance',[requestId,decision,note]);
   const snapshot = await getDoc(doc(db, 'maintenance_requests', requestId));
   if (!snapshot.exists()) throw new Error('Request not found.');
   const raw = { ...snapshot.data(), id: snapshot.id } as FieldMaintenance;
@@ -108,6 +111,7 @@ export async function reviewMaintenance(actor: UserProfile, requestId: string, d
 }
 
 export async function startMaintenance(actor: UserProfile, requestId: string) {
+ if(isRemoteBrowser)return remoteCommand('startMaintenance',[requestId]);
   if (actor.role !== 'admin') throw new Error('Admin coordinates approved repairs.');
   const snapshot = await getDoc(doc(db, 'maintenance_requests', requestId));
   if (!snapshot.exists()) throw new Error('Request not found.');
@@ -121,6 +125,7 @@ export async function startMaintenance(actor: UserProfile, requestId: string) {
 }
 
 export async function completeMaintenance(actor: UserProfile, requestId: string, details: { technician: string; actualCost: number; repairNotes: string; repairPhotos: string[]; partsReplaced?: string; serviceDate?: string; workableConfirmed?: boolean }) {
+ if(isRemoteBrowser)return remoteCommand('completeMaintenance',[requestId,details]);
   if (!['cf', 'jcf', 'admin'].includes(actor.role)) throw new Error('The responsible CF/JCF must submit the service report.');
   const snapshot = await getDoc(doc(db, 'maintenance_requests', requestId));
   if (!snapshot.exists()) throw new Error('Request not found.');
@@ -145,6 +150,7 @@ export async function completeMaintenance(actor: UserProfile, requestId: string,
 }
 
 export async function reviewServiceLog(actor: UserProfile, logId: string, decision: 'approve' | 'reject', note: string) {
+ if(isRemoteBrowser)return remoteCommand('reviewServiceLog',[logId,decision,note]);
   const snapshot = await getDoc(doc(db, 'maintenance_logs', logId));
   if (!snapshot.exists()) throw new Error('Service log not found.');
   const raw = { ...snapshot.data(), id: snapshot.id } as FieldServiceLog;

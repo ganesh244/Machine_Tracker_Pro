@@ -16,6 +16,7 @@ export interface RolePermissions {
 }
 
 export interface UserProfile {
+  username?: string;
   uid: string;
   email: string;
   role: UserRole;
