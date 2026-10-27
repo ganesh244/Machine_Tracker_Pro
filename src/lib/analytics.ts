@@ -1,5 +1,5 @@
-import { canManageMachine, type FieldMachine, type FieldUsage } from './fieldOperations';
-import type { UserProfile } from '../types';
+import { canManageMachine, type FieldMachine, type FieldUsage } from './fieldOperations.js';
+import type { UserProfile } from '../types.js';
 export type Geography = 'village' | 'mandal' | 'district' | 'state';
 export const defaultGeography = (role: UserProfile['role']): Geography => role === 'cf' || role === 'jcf' ? 'village' : role === 'area_manager' ? 'mandal' : role === 'district_manager' || role === 'state_manager' ? 'district' : 'state';
 export function machineTypeName(machine: FieldMachine) {

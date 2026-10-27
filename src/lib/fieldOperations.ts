@@ -1,7 +1,7 @@
-import { isRemoteBrowser, remoteCommand } from './backendClient';
-import { collection, doc, getDoc, getDocs, writeBatch } from './data';
-import { db } from './database';
-import type { Planter, UserProfile, UserRole } from '../types';
+import { isRemoteBrowser, remoteCommand } from './backendClient.js';
+import { collection, doc, getDoc, getDocs, writeBatch } from './data.js';
+import { db } from './database.js';
+import type { Planter, UserProfile, UserRole } from '../types.js';
 
 export const MACHINE_TYPES = ['MCP', 'Drum seeder', 'Laser land leveller', 'Other'] as const;
 export const ROLE_NAMES: Record<UserRole, string> = { farm_mechanization: 'Farm Mechanization Team', admin: 'Admin team', state_manager: 'State manager', district_manager: 'District manager', area_manager: 'Area manager', cf: 'Community facilitator', jcf: 'JCF / Field operator' };

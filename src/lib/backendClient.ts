@@ -1,4 +1,4 @@
-import { isLocalDemo } from './demo';
+import { isLocalDemo } from './demo.js';
 export const isRemoteBrowser = typeof window !== 'undefined' && !isLocalDemo;
 export async function backendRequest(action:string,body:unknown={}) {
  const response=await fetch(`/api/gateway?action=${encodeURIComponent(action)}`,{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});

@@ -1,6 +1,6 @@
-import { branchIds, reportingAncestors, canManageMachine, type FieldMachine } from '../src/lib/fieldOperations';
-import { canSeeSeason, type SeasonSchedule } from '../src/lib/seasonOperations';
-import type { UserProfile } from '../src/types';
+import { branchIds, reportingAncestors, canManageMachine, type FieldMachine } from '../src/lib/fieldOperations.js';
+import { canSeeSeason, type SeasonSchedule } from '../src/lib/seasonOperations.js';
+import type { UserProfile } from '../src/types.js';
 export function visibleRecords(actor:UserProfile,all:Record<string,any>){
  const users=Object.entries(all).filter(([path])=>/^users\/[^/]+$/.test(path)).map(([,value])=>value as UserProfile);
  const branch=branchIds(users,actor.uid),directory=new Set([...branch,...reportingAncestors(users,actor.uid).map(user=>user.uid)]),global=['admin','farm_mechanization'].includes(actor.role);

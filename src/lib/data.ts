@@ -1,9 +1,9 @@
 // Keep the existing data API while routing the local demo to browser storage.
-import { backendRequest, isRemoteBrowser } from './backendClient';
+import { backendRequest, isRemoteBrowser } from './backendClient.js';
 export interface ServerStore { records:Record<string,any>; changed:Set<string> }
 let serverProvider:(()=>ServerStore)|undefined;
 export function configureServerStore(provider:()=>ServerStore){serverProvider=provider;}
-import { isLocalDemo, DEMO_STORE_KEY, seedDemo, upgradeDemoRoles } from './demo';
+import { isLocalDemo, DEMO_STORE_KEY, seedDemo, upgradeDemoRoles } from './demo.js';
 
 type LocalRef = { path: string; kind: 'doc' | 'collection'; constraints?: any[]; id: string };
 let records: Record<string, any> | undefined;

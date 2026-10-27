@@ -1,6 +1,6 @@
 import { MongoClient, type ClientSession } from 'mongodb';
 import { AsyncLocalStorage } from 'node:async_hooks';
-import { configureServerStore, type ServerStore } from '../src/lib/data';
+import { configureServerStore, type ServerStore } from '../src/lib/data.js';
 export const context = new AsyncLocalStorage<ServerStore>();
 configureServerStore(()=>{const value=context.getStore();if(!value)throw new Error('Database operation outside request context.');return value;});
 let connection:Promise<MongoClient>|undefined;

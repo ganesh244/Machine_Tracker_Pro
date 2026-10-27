@@ -1,9 +1,9 @@
 import { randomBytes, scrypt as rawScrypt, timingSafeEqual, createHash } from 'node:crypto';
 import { promisify } from 'node:util';
-import { mongo, transaction } from './mongo';
-import { doc, setDoc, getDoc } from '../src/lib/data';
-import { db as logicalDb } from '../src/lib/database';
-import type { UserProfile } from '../src/types';
+import { mongo, transaction } from './mongo.js';
+import { doc, setDoc, getDoc } from '../src/lib/data.js';
+import { db as logicalDb } from '../src/lib/database.js';
+import type { UserProfile } from '../src/types.js';
 const scrypt=promisify(rawScrypt);
 export const COOKIE='farmmech_session';
 export const digest=(value:string)=>createHash('sha256').update(value).digest('hex');

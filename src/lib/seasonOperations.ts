@@ -1,9 +1,9 @@
-import { isRemoteBrowser, remoteCommand } from './backendClient';
-import { collection, doc, getDoc, getDocs, writeBatch } from './data';
-import { db } from './database';
-import { branchIds, reportingAncestors, canManageMachine, type FieldMachine } from './fieldOperations';
-import { raiseMaintenance } from './maintenance';
-import type { UserProfile } from '../types';
+import { isRemoteBrowser, remoteCommand } from './backendClient.js';
+import { collection, doc, getDoc, getDocs, writeBatch } from './data.js';
+import { db } from './database.js';
+import { branchIds, reportingAncestors, canManageMachine, type FieldMachine } from './fieldOperations.js';
+import { raiseMaintenance } from './maintenance.js';
+import type { UserProfile } from '../types.js';
 export interface SeasonSchedule { id:string; name:string; state?:string; audience?:'branch'|'location'; district:string; ownerId:string; seasonStart:string; seasonEnd:string; preAlertDate:string; postAlertDate:string; createdAt:string; archived?:boolean; updatedAt?:string }
 export interface SeasonInspection { id:string; scheduleId:string; machineId:string; scannedQRId?:string; phase:'pre'|'post'; ready:boolean; checks:Record<string,boolean>; notes:string; photos:string[]; maintenanceId?:string; recordedBy:string; recordedByName:string; timestamp:string }
 export const PRE_CHECKS:Record<string,string>={mechanism:'Mechanism / moving parts checked',safety:'Safety guards and fasteners okay',trial:'Trial run completed',ready:'Machine ready for field use'};

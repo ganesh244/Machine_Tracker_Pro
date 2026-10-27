@@ -1,4 +1,4 @@
-import type { UserProfile } from '../types';
+import type { UserProfile } from '../types.js';
 
 const env = (import.meta as any).env || {};
 export const isLocalDemo = env.VITE_LOCAL_DEMO === 'true' || (env.VITE_LOCAL_DEMO !== 'false' && env.DEV && env.VITE_SKIP_LOCAL_LOGIN === 'true');

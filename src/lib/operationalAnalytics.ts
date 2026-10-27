@@ -1,7 +1,7 @@
-import { branchIds, canManageMachine, type FieldMachine, type FieldUsage, type LeadFarmer, type QRLabel } from './fieldOperations';
-import { machineState, machineTypeName, type Geography } from './analytics';
-import { MAINTENANCE_STATUS, resolveMaintenanceRoute, type FieldMaintenance } from './maintenance';
-import type { UserProfile } from '../types';
+import { branchIds, canManageMachine, type FieldMachine, type FieldUsage, type LeadFarmer, type QRLabel } from './fieldOperations.js';
+import { machineState, machineTypeName, type Geography } from './analytics.js';
+import { MAINTENANCE_STATUS, resolveMaintenanceRoute, type FieldMaintenance } from './maintenance.js';
+import type { UserProfile } from '../types.js';
 const DAY = 86400000;
 const validGPS = (row: { lat?: number; lng?: number }) => Number.isFinite(row.lat) && Math.abs(row.lat!) <= 90 && Number.isFinite(row.lng) && Math.abs(row.lng!) <= 180;
 export function buildOperationalAnalytics(actor: UserProfile, users: UserProfile[], inputMachines: FieldMachine[], inputUsage: FieldUsage[], inputFarmers: LeadFarmer[], inputRequests: FieldMaintenance[], inputLabels: QRLabel[], from = '', to = '', geography: Geography = 'district', now = new Date()) {

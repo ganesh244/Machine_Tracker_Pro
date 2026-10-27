@@ -1,11 +1,11 @@
-import { mongo, ensureIndexes, records, transaction, context } from '../server/mongo';
-import { validateCredentials, verifyPassword, hashPassword, issueSession, currentUser, logout, cookie, throttle, setupAdmin } from '../server/auth';
-import { visibleRecords } from '../server/scope';
-import * as field from '../src/lib/fieldOperations';
-import * as maintenance from '../src/lib/maintenance';
-import * as seasons from '../src/lib/seasonOperations';
-import { createTeamUser } from '../src/lib/teamManagement';
-import { getDoc, getDocs } from '../src/lib/data';
+import { mongo, ensureIndexes, records, transaction, context } from '../server/mongo.js';
+import { validateCredentials, verifyPassword, hashPassword, issueSession, currentUser, logout, cookie, throttle, setupAdmin } from '../server/auth.js';
+import { visibleRecords } from '../server/scope.js';
+import * as field from '../src/lib/fieldOperations.js';
+import * as maintenance from '../src/lib/maintenance.js';
+import * as seasons from '../src/lib/seasonOperations.js';
+import { createTeamUser } from '../src/lib/teamManagement.js';
+import { getDoc, getDocs } from '../src/lib/data.js';
 
 const commands:Record<string,Function>={createQRBatch:field.createQRBatch,addBatchStickers:field.addBatchStickers,distributeQRLabels:field.distributeQRLabels,onboardFieldMachine:field.onboardFieldMachine,onboardLeadFarmer:field.onboardLeadFarmer,recordFarmerUsage:field.recordFarmerUsage,assignResponsibleCF:field.assignResponsibleCF,raiseMaintenance:maintenance.raiseMaintenance,reviewMaintenance:maintenance.reviewMaintenance,startMaintenance:maintenance.startMaintenance,completeMaintenance:maintenance.completeMaintenance,reviewServiceLog:maintenance.reviewServiceLog,createSeasonSchedule:seasons.createSeasonSchedule,updateSeasonSchedule:seasons.updateSeasonSchedule,archiveSeasonSchedule:seasons.archiveSeasonSchedule,saveSeasonInspection:seasons.saveSeasonInspection};
 function safeInput(value:any,depth=0){if(depth>12)throw new Error('Invalid request.');if(typeof value==='string'&&value.length>1500000)throw new Error('An uploaded photo or text is too large.');if(Array.isArray(value)){if(value.length>500)throw new Error('Too many items.');value.forEach(item=>safeInput(item,depth+1));}else if(value&&typeof value==='object'){for(const [key,item] of Object.entries(value)){if(['__proto__','constructor','prototype','__local'].includes(key)||key.startsWith('$')||key.includes('.'))throw new Error('Invalid request field.');safeInput(item,depth+1);}}}

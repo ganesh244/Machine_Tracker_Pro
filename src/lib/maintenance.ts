@@ -1,8 +1,8 @@
-import { isRemoteBrowser, remoteCommand } from './backendClient';
-import { collection, doc, getDoc, getDocs, writeBatch } from './data';
-import { db } from './database';
-import { canManageMachine, reportingAncestors, ROLE_NAMES, type FieldMachine } from './fieldOperations';
-import type { MaintenanceRequest, MaintenanceLog, UserProfile, UserRole } from '../types';
+import { isRemoteBrowser, remoteCommand } from './backendClient.js';
+import { collection, doc, getDoc, getDocs, writeBatch } from './data.js';
+import { db } from './database.js';
+import { canManageMachine, reportingAncestors, ROLE_NAMES, type FieldMachine } from './fieldOperations.js';
+import type { MaintenanceRequest, MaintenanceLog, UserProfile, UserRole } from '../types.js';
 
 export interface MaintenanceEvent { action: string; by: string; name: string; role: UserRole; at: string; note: string }
 export interface FieldMaintenance extends MaintenanceRequest {

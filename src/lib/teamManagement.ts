@@ -1,8 +1,8 @@
-import { isRemoteBrowser, remoteCommand } from './backendClient';
-import { collection, doc, getDoc, getDocs, writeBatch } from './data';
-import { db } from './database';
-import { isLocalDemo } from './demo';
-import type { UserProfile, UserRole } from '../types';
+import { isRemoteBrowser, remoteCommand } from './backendClient.js';
+import { collection, doc, getDoc, getDocs, writeBatch } from './data.js';
+import { db } from './database.js';
+import { isLocalDemo } from './demo.js';
+import type { UserProfile, UserRole } from '../types.js';
 export const ASSIGNABLE_ROLES = ['state_manager', 'district_manager', 'area_manager', 'cf', 'jcf'] as const;
 export const PARENT_ROLES: Partial<Record<UserRole, UserRole[]>> = { state_manager: ['admin'], district_manager: ['state_manager'], area_manager: ['district_manager', 'state_manager'], cf: ['area_manager', 'district_manager', 'state_manager'], jcf: ['cf'] };
 export async function createTeamUser(actor: UserProfile, details: { username?:string; password?:string; displayName: string; email: string; role: UserRole; parentId: string; assignedState: string; assignedDistrict: string; assignedMandal: string; assignedArea: string }) {

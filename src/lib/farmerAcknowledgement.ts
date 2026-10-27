@@ -1,9 +1,9 @@
-import { receiptTranslator, type ReceiptLanguage } from './receiptTranslations';
-export type { ReceiptLanguage } from './receiptTranslations';
+import { receiptTranslator, type ReceiptLanguage } from './receiptTranslations.js';
+export type { ReceiptLanguage } from './receiptTranslations.js';
 import QRCode from 'qrcode';
 import { jsPDF } from 'jspdf';
-import type { FieldMachine, LeadFarmer } from './fieldOperations';
-import type { UserProfile } from '../types';
+import type { FieldMachine, LeadFarmer } from './fieldOperations.js';
+import type { UserProfile } from '../types.js';
 
 let fontsReady:Promise<unknown>|undefined;
 function loadReceiptFonts(){return fontsReady ||=Promise.all(['Telugu','Devanagari'].map(async script=>{const font=new FontFace('Receipt'+script,`url(/fonts/NotoSans${script}.ttf)`,{weight:'100 900'});document.fonts.add(await font.load());})).catch(error=>{fontsReady=undefined;throw error;});}

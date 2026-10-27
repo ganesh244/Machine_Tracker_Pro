@@ -1,7 +1,7 @@
-import { doc, getDoc, writeBatch } from './data';
-import { db } from './database';
-import { isLocalDemo, demoUsers } from './demo';
-import { APPROVAL_CHAIN } from './maintenance';
+import { doc, getDoc, writeBatch } from './data.js';
+import { db } from './database.js';
+import { isLocalDemo, demoUsers } from './demo.js';
+import { APPROVAL_CHAIN } from './maintenance.js';
 
 export const DEMO_BATCH = 'demo-field-rollout-v2';
 export const demoLabel = (n: number) => `DEMO-QR-${String(n).padStart(3, '0')}`;
