@@ -19,6 +19,7 @@ export async function createTeamUser(actor: UserProfile, details: { username?:st
   const parent = users.find(user => user.uid === details.parentId);
   if (!parent || !(PARENT_ROLES[details.role]||(['admin','farm_mechanization'].includes(details.role)?['admin']:[])).includes(parent.role)) throw new Error('Choose an eligible reporting manager. Area and District manager levels may be skipped when vacant.');
   const user: UserProfile = { uid: crypto.randomUUID(), displayName, email, ...(!isLocalDemo?{username:details.username?.toLowerCase()}:{}), role: details.role, parentId: parent.uid, assignedState: details.assignedState.trim() || parent.assignedState || '', assignedDistrict: details.assignedDistrict.trim() || parent.assignedDistrict || '', assignedMandal: details.assignedMandal.trim() || parent.assignedMandal || '', assignedArea: details.assignedArea.trim() || parent.assignedArea || '' };
+  if (user.role === 'farm_mechanization') Object.assign(user, {assignedState:'',assignedDistrict:'',assignedMandal:'',assignedArea:''});
   if (!['admin','farm_mechanization'].includes(user.role) && (!user.assignedState || (user.role !== 'state_manager' && !user.assignedDistrict))) throw new Error('Enter the assigned state and district.');
   const commit = writeBatch(db);
   commit.set(doc(db, 'users', user.uid), user);

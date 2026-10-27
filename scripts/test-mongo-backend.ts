@@ -21,6 +21,7 @@ try{
  const login=await request('login',{username:'owner',password});assert.equal(login.status,200);const cookie=login.cookie;
  const create=async(username:string,role:string,parentId:string)=>command('createTeamUser',[{displayName:username,email:'',username,password,role,parentId,assignedState:'Telangana',assignedDistrict:'Nizamabad',assignedMandal:'Armoor',assignedArea:'Armoor'}],cookie);
  const state=await create('state-one','state_manager',setup.body.user.uid);const district=await create('district-one','district_manager',state.uid);const area=await create('area-one','area_manager',district.uid);const cf=await create('cf-one','cf',area.uid);const otherState=await create('state-two','state_manager',setup.body.user.uid);const otherDistrict=await create('district-two','district_manager',otherState.uid);const otherArea=await create('area-two','area_manager',otherDistrict.uid);const otherCF=await create('cf-two','cf',otherArea.uid);
+ const fm=await create('fm-boss','farm_mechanization',setup.body.user.uid);for(const key of ['assignedState','assignedDistrict','assignedMandal','assignedArea'])assert.equal(fm[key],'');
  const cfLogin=await request('login',{username:'cf-one',password});assert.equal(cfLogin.status,200);
  const forbidden=await request('command',{name:'createQRBatch',args:['Forbidden',1],actor:{uid:setup.body.user.uid,role:'admin'}},cfLogin.cookie);assert.equal(forbidden.status,400);
  const duplicate=await request('command',{name:'createTeamUser',args:[{displayName:'Duplicate',email:'',username:'cf-one',password,role:'cf',parentId:area.uid,assignedState:'Telangana',assignedDistrict:'Nizamabad',assignedMandal:'',assignedArea:''}]},cookie);assert.equal(duplicate.status,409);
@@ -31,6 +32,7 @@ try{
  const machine=await command('onboardFieldMachine',[labels[0],{...location,machineType:'MCP',brand:'Test',model:'2026',serialNumber:'TEST-1',cfId:cf.uid,photos:[]}],areaCookie);
  const photo='data:image/png;base64,iVBORw0KGgo=';
  const farmer=await command('onboardLeadFarmer',[machine.id,{...location,name:'Test Farmer',phone:'0000000000',landAcres:4,photos:[photo]}],cfLogin.cookie);assert.equal(farmer.machineId,machine.id);
+ const fmCookie=(await request('login',{username:'fm-boss',password})).cookie;const fmFarmers=await request('read',{ref:{kind:'collection',path:'farmers'}},fmCookie);assert.equal(fmFarmers.body.rows.length,1,'FM sees farmers outside its descendants without assigned geography');
  const otherCookie=(await request('login',{username:'cf-two',password})).cookie;
  const deniedRead=await request('read',{ref:{kind:'collection',path:'farmers'}},otherCookie);assert.equal(deniedRead.body.rows.length,0);
  const deniedDirect=await request('read',{ref:{kind:'doc',path:'farmers/'+farmer.id}},otherCookie);assert.equal(deniedDirect.body.value,undefined);
