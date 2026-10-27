@@ -1,4 +1,7 @@
+import { normalizeFieldMaintenance, normalizeServiceLog, reviewMaintenance, reviewServiceLog, startMaintenance } from './lib/maintenance';
+import { isLocalDemo, demoUsers, DEMO_SESSION_KEY, DEMO_STORE_KEY, readLocalFile } from './lib/demo';
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
+import { initializeApp } from 'firebase/app';
 import {
     collection,
     onSnapshot,
@@ -15,8 +18,8 @@ import {
     arrayUnion,
     deleteDoc,
     increment
-} from 'firebase/firestore';
-import { onAuthStateChanged } from 'firebase/auth';
+} from './lib/data';
+import { onAuthStateChanged, signInWithEmailAndPassword, signOut, getAuth, createUserWithEmailAndPassword, sendSignInLinkToEmail } from 'firebase/auth';
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 
 import { motion, AnimatePresence } from 'motion/react';
@@ -74,7 +77,8 @@ import {
     MessageSquare,
     Network,
     UserPlus,
-    Shield
+    Shield,
+    Sparkles
 } from 'lucide-react';
 import { MapContainer, TileLayer, Marker, Popup, useMap, CircleMarker } from 'react-leaflet';
 import L from 'leaflet';
@@ -93,7 +97,7 @@ let DefaultIcon = L.icon({
 L.Marker.prototype.options.icon = DefaultIcon;
 import { format } from 'date-fns';
 import { db, auth, storage } from './firebase';
-import { Planter, ReadingUpdate, MaintenanceLog, MaintenanceRequest, AppNotification, calculateArea, UserProfile, UserRole, Assignment, Permission, Message, PreventiveMaintenanceSchedule } from './types';
+import { formatLocation, getOperatingStatus, Planter, ReadingUpdate, MaintenanceLog, MaintenanceRequest, AppNotification, calculateArea, UserProfile, UserRole, Assignment, Permission, Message, PreventiveMaintenanceSchedule } from './types';
 import { cn } from './lib/utils';
 import { deleteSheetDocument, getSheetInfo, syncSheetDocument, uploadDriveFile } from './lib/sheetsSync';
 import { AppShell } from './components/layout/AppShell';
@@ -101,6 +105,9 @@ import { StatCard } from './components/dashboard/StatCard';
 import { MachineCard } from './components/fleet/MachineCard';
 import { MachineDetail } from './components/fleet/MachineDetail';
 import { QRPrintGrid } from './components/fleet/QRPrintGrid';
+import { GenerateBatchModal } from './components/fleet/GenerateBatchModal';
+import { QRManagementTab } from './components/fleet/QRManagementTab';
+import { CameraScanner } from './components/fleet/CameraScanner';
 import { PublicScanFlow } from './components/fleet/PublicScanFlow';
 import { AlertsPanel } from './components/dashboard/AlertsPanel';
 import { UtilizationDashboard } from './components/analytics/UtilizationDashboard';
@@ -255,26 +262,29 @@ const getDescendantUserIds = (uid: string, users: UserProfile[]): string[] => {
 };
 
 const USER_ROLE_LEVEL: Record<UserRole, number> = {
-    operator: 1,
-    community_facilitator: 2,
+    jcf: 1,
+    cf: 2,
     area_manager: 3,
     district_manager: 4,
-    farm_mechanization: 5,
-    admin: 6
+    state_manager: 5,
+    admin: 6,
+    farm_mechanization: 7
 };
 
 const getManageableRoles = (managerRole?: UserRole): UserRole[] => {
     switch (managerRole) {
-        case 'admin':
-            return ['farm_mechanization', 'district_manager', 'area_manager', 'community_facilitator', 'operator'];
         case 'farm_mechanization':
-            return ['district_manager', 'area_manager', 'community_facilitator', 'operator'];
+            return ['admin', 'state_manager', 'district_manager', 'area_manager', 'cf', 'jcf'];
+        case 'admin':
+            return ['state_manager', 'district_manager', 'area_manager', 'cf', 'jcf'];
+        case 'state_manager':
+            return ['district_manager', 'area_manager', 'cf', 'jcf'];
         case 'district_manager':
-            return ['area_manager', 'community_facilitator', 'operator'];
+            return ['area_manager', 'cf', 'jcf'];
         case 'area_manager':
-            return ['community_facilitator', 'operator'];
-        case 'community_facilitator':
-            return ['operator'];
+            return ['cf', 'jcf'];
+        case 'cf':
+            return ['jcf'];
         default:
             return [];
     }
@@ -286,50 +296,16 @@ const canRoleManageRole = (managerRole: UserRole, targetRole: UserRole) =>
 const canRoleBeParentOfRole = (managerRole: UserRole, childRole: UserRole) =>
     USER_ROLE_LEVEL[managerRole] > USER_ROLE_LEVEL[childRole];
 
-const getInitialRequestStatus = (holderRole: UserRole): MaintenanceRequest['status'] => {
-    if (holderRole === 'district_manager') return 'pending_farm_mech';
-    if (holderRole === 'area_manager') return 'pending_district_manager';
-    if (holderRole === 'farm_mechanization') return 'pending_admin';
-    if (holderRole === 'admin') return 'approved';
-    return 'pending_area_manager';
-};
-
-const getNextRequestStatus = (status: MaintenanceRequest['status']): MaintenanceRequest['status'] => {
-    if (status === 'pending_area_manager') return 'pending_district_manager';
-    if (status === 'pending_district_manager') return 'pending_farm_mech';
-    if (status === 'pending_farm_mech') return 'pending_admin';
-    if (status === 'pending_admin') return 'approved';
-    return status;
-};
-
-const getNextRequestRole = (status: MaintenanceRequest['status']): UserRole | null => {
-    if (status === 'pending_area_manager') return 'district_manager';
-    if (status === 'pending_district_manager') return 'farm_mechanization';
-    if (status === 'pending_farm_mech') return 'admin';
-    return null;
-};
-
-const getRequestOwnerRole = (status: MaintenanceRequest['status']): UserRole | null => {
-    if (status === 'pending_area_manager') return 'area_manager';
-    if (status === 'pending_district_manager') return 'district_manager';
-    if (status === 'pending_farm_mech') return 'farm_mechanization';
-    if (status === 'pending_admin') return 'admin';
-    return null;
-};
-
-const getRequestApprovalRoleKey = (status: MaintenanceRequest['status']) => {
-    if (status === 'pending_area_manager') return 'areaManager' as const;
-    if (status === 'pending_district_manager') return 'districtManager' as const;
-    if (status === 'pending_farm_mech') return 'farmMechManager' as const;
-    if (status === 'pending_admin') return 'admin' as const;
-    return null;
-};
-
+const getInitialRequestStatus = (_holderRole: UserRole): MaintenanceRequest['status'] => 'pending_area_manager';
+const getNextRequestStatus = (status: MaintenanceRequest['status']): MaintenanceRequest['status'] => ({ pending_area_manager: 'pending_district_manager', pending_district_manager: 'pending_state_manager', pending_state_manager: 'pending_farm_mech', pending_farm_mech: 'approved', pending_admin: 'approved' } as any)[status] || status;
+const getNextRequestRole = (status: MaintenanceRequest['status']): UserRole | null => ({ pending_area_manager: 'district_manager', pending_district_manager: 'state_manager', pending_state_manager: 'farm_mechanization' } as any)[status] || null;
+const getRequestOwnerRole = (status: MaintenanceRequest['status']): UserRole | null => ({ pending_area_manager: 'area_manager', pending_district_manager: 'district_manager', pending_state_manager: 'state_manager', pending_farm_mech: 'farm_mechanization', pending_admin: 'farm_mechanization' } as any)[status] || null;
+const getRequestApprovalRoleKey = (status: MaintenanceRequest['status']) => ({ pending_area_manager: 'areaManager', pending_district_manager: 'districtManager', pending_state_manager: 'stateManager', pending_farm_mech: 'farmMechManager' } as const)[status] || null;
 const REQUEST_STAGES = [
     { key: 'pending_area_manager', label: 'Area Manager', roleKey: 'areaManager' as const },
     { key: 'pending_district_manager', label: 'District Manager', roleKey: 'districtManager' as const },
-    { key: 'pending_farm_mech', label: 'Farm Mech', roleKey: 'farmMechManager' as const },
-    { key: 'pending_admin', label: 'Admin', roleKey: 'admin' as const },
+    { key: 'pending_state_manager', label: 'State Manager', roleKey: 'stateManager' as const },
+    { key: 'pending_farm_mech', label: 'Farm Mechanization Team', roleKey: 'farmMechManager' as const },
     { key: 'approved', label: 'Approved', roleKey: null },
     { key: 'in_progress', label: 'In Progress', roleKey: null },
     { key: 'completed', label: 'Completed', roleKey: null },
@@ -338,7 +314,8 @@ const REQUEST_STAGES = [
 const REQUEST_STATUS_LABELS: Record<MaintenanceRequest['status'], string> = {
     pending_area_manager: 'Waiting for Area Manager',
     pending_district_manager: 'Waiting for District Manager',
-    pending_farm_mech: 'Waiting for Farm Mech',
+    pending_state_manager: 'Waiting for State Manager',
+    pending_farm_mech: 'Waiting for Farm Mechanization Team',
     pending_admin: 'Waiting for Admin',
     approved: 'Approved',
     in_progress: 'In Progress',
@@ -355,16 +332,15 @@ const normalizeMaintenanceRequest = (
     const planter = planters.find(p => p.id === raw.planterId);
     const holderUid = raw.currentHolderUid || planter?.currentHolderId || raw.requestedByUid;
     const holderProfile = holderUid ? allUsers.find(user => user.uid === holderUid) : undefined;
-    const fallbackRole = planter?.currentHolderRole || holderProfile?.role || 'community_facilitator';
+    const fallbackRole = planter?.currentHolderRole || holderProfile?.role || 'cf';
     const normalizedStatus = raw.status === 'open' || !raw.status
         ? getInitialRequestStatus(fallbackRole)
         : raw.status;
 
     return {
-        ...raw,
+        ...normalizeFieldMaintenance({ ...raw, status: normalizedStatus }),
         currentHolderUid: holderUid,
         currentHolderName: raw.currentHolderName || holderProfile?.displayName || raw.requestedBy || holderUid || 'Unknown',
-        status: normalizedStatus,
         approvals: raw.approvals || {}
     } as MaintenanceRequest;
 };
@@ -447,6 +423,7 @@ const downloadTextFile = (filename: string, content: string, mimeType: string) =
 
 const detectPhotoSource = (imageUrl?: string | null) => {
     if (!imageUrl) return 'No proof photo found';
+    if (imageUrl.startsWith('data:')) return 'Browser storage';
     if (/drive\.google\.com|googleusercontent\.com|docs\.google\.com/.test(imageUrl)) return 'Google Drive';
     if (/firebasestorage\.googleapis\.com/.test(imageUrl)) return 'Firebase Storage';
     return 'External URL';
@@ -463,7 +440,7 @@ type ManagedUserFormState = {
     parentId: string;
 };
 
-const createEmptyUserForm = (role: UserRole = 'operator', parentId = ''): ManagedUserFormState => ({
+const createEmptyUserForm = (role: UserRole = 'jcf', parentId = ''): ManagedUserFormState => ({
     displayName: '',
     email: '',
     role,
@@ -593,14 +570,15 @@ const OrganizationTree = ({
 const APPROVAL_STAGES = [
     { key: 'pending_area_manager', label: 'Area Manager', roleKey: 'areaManager' as const },
     { key: 'pending_district_manager', label: 'District Manager', roleKey: 'districtManager' as const },
-    { key: 'pending_farm_mech', label: 'Farm Mech', roleKey: 'farmMechManager' as const },
+    { key: 'pending_state_manager', label: 'State Manager', roleKey: 'stateManager' as const },
+    { key: 'pending_farm_mech', label: 'Farm Mechanization Team', roleKey: 'farmMechManager' as const },
     { key: 'approved', label: 'Final Approval', roleKey: null },
 ];
 
 const MaintenanceProgressBar = ({ log }: { log: MaintenanceLog }) => {
     const isRejected = log.approvalStatus === 'rejected';
     const currentStageIndex = isRejected ? -1 : APPROVAL_STAGES.findIndex(s => s.key === log.approvalStatus);
-    const completedCount = log.approvalStatus === 'approved' ? 4 : currentStageIndex;
+    const completedCount = log.approvalStatus === 'approved' ? APPROVAL_STAGES.length : currentStageIndex;
 
     return (
         <div className="mt-3">
@@ -910,7 +888,7 @@ const OperatorMachineCard = ({ planter, onUpdate, onReport, calcArea }: { plante
             <div className="grid grid-cols-2 gap-8 mb-8 p-6 bg-slate-800/50 rounded-2xl border border-slate-700/50 backdrop-blur-sm">
                 <div>
                     <p className="text-[10px] uppercase font-bold text-slate-400 tracking-wider mb-2">Last Reading</p>
-                    <p className="text-2xl font-mono text-slate-100">{planter.lastReading.toLocaleString()}</p>
+                    <p className="text-2xl font-mono text-slate-100">{(planter.lastReading ?? 0).toLocaleString()}</p>
                 </div>
                 <div>
                     <p className="text-[10px] uppercase font-bold text-slate-400 tracking-wider mb-2">Total Area</p>
@@ -937,13 +915,14 @@ const OperatorMachineCard = ({ planter, onUpdate, onReport, calcArea }: { plante
 );
 
 export default function App() {
-    // Simple local user (replaces Firebase Auth User)
+    const [demoAccountId, setDemoAccountId] = useState('demo-admin');
+    // Current signed-in profile
     interface SimpleUser { uid: string; email: string; displayName: string; }
     const [user, setUser] = useState<SimpleUser | null>(null);
     const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
     const [planters, setPlanters] = useState<Planter[]>([]);
     const [selectedPlanter, setSelectedPlanter] = useState<Planter | null>(null);
-    const [activeActionModal, setActiveActionModal] = useState<'update' | 'request' | 'manage' | null>(null);
+    const [activeActionModal, setActiveActionModal] = useState<'update' | 'request' | 'manage' | 'gallery' | 'service' | 'repair' | 'schedule' | null>(null);
     const [updates, setUpdates] = useState<ReadingUpdate[]>([]);
     const [maintenanceLogs, setMaintenanceLogs] = useState<MaintenanceLog[]>([]);
     const [maintenanceRequests, setMaintenanceRequests] = useState<MaintenanceRequest[]>([]);
@@ -970,7 +949,7 @@ export default function App() {
     const [filterFacilitator, setFilterFacilitator] = useState('All');
     const [showRequestForm, setShowRequestForm] = useState(false);
     const [showTransferModal, setShowTransferModal] = useState(false);
-    const [activeTab, setActiveTab] = useState<'fleet' | 'reports' | 'map' | 'dashboard' | 'assignments' | 'settings' | 'hierarchy' | 'messages' | 'updates' | 'analytics'>('dashboard');
+    const [activeTab, setActiveTab] = useState<'fleet' | 'qr_management' | 'reports' | 'map' | 'dashboard' | 'assignments' | 'settings' | 'hierarchy' | 'messages' | 'updates' | 'analytics'>('dashboard');
     const [reportPeriod, setReportPeriod] = useState<'daily' | 'weekly' | 'monthly'>('daily');
     const [allUsers, setAllUsers] = useState<UserProfile[]>([]);
     const [selectedMachineIds, setSelectedMachineIds] = useState<string[]>([]);
@@ -980,34 +959,10 @@ export default function App() {
     const [unassignedPage, setUnassignedPage] = useState(1);
     const [showAddMachineModal, setShowAddMachineModal] = useState(false);
     const [showQRPrint, setShowQRPrint] = useState(false);
+    const [showBatchModal, setShowBatchModal] = useState(false);
     const [newMachineData, setNewMachineData] = useState({ id: '', type: 'Planter Pro', state: '', district: '', mandal: '', location: '', lat: '', lng: '', brand: '', model: '', serialNumber: '', purchaseDate: '', purchaseCost: '', warranty: '', manualLink: '', maintenanceSchedule: '' });
     const [addMachineLoading, setAddMachineLoading] = useState(false);
     const [geocodingLoading, setGeocodingLoading] = useState(false);
-
-    useEffect(() => {
-        const unsub = onAuthStateChanged(auth, (u) => {
-            setUser(u);
-            if (u) {
-                // Load profile
-                getDoc(doc(db, 'users', u.uid)).then(snap => {
-                    if (snap.exists()) {
-                        setUserProfile(snap.data() as UserProfile);
-                    }
-                });
-            } else {
-                setUserProfile(null);
-            }
-        });
-        return unsub;
-    }, []);
-
-    useEffect(() => {
-        const q = query(collection(db, 'planters'));
-        const unsub = onSnapshot(q, (snap) => {
-            setPlanters(snap.docs.map(docSnapshot => ({ ...docSnapshot.data(), id: docSnapshot.id } as Planter)));
-        });
-        return unsub;
-    }, []);
 
     useEffect(() => {
         const unsubscribe = onSnapshot(collection(db, 'users'), (snapshot) => {
@@ -1032,7 +987,7 @@ export default function App() {
 
     useEffect(() => {
         const unsubscribe = onSnapshot(collection(db, 'maintenance_logs'), (snapshot) => {
-            setAllMaintenanceLogs(snapshot.docs.map(docSnapshot => ({ ...docSnapshot.data(), id: docSnapshot.id } as MaintenanceLog)));
+            setAllMaintenanceLogs(snapshot.docs.map(docSnapshot => (normalizeServiceLog({ ...docSnapshot.data(), id: docSnapshot.id }))));
         });
         return () => unsubscribe();
     }, []);
@@ -1060,6 +1015,7 @@ export default function App() {
 
     // Polling for health check
     useEffect(() => {
+        if (isLocalDemo) return;
         const checkHealth = async () => {
             try {
                 const res = await fetch('/api/sheets/info');
@@ -1090,6 +1046,7 @@ export default function App() {
     // Manual Sync Handler
     const handleManualSyncAll = async () => {
         if (!isAdmin) return;
+        if (isLocalDemo) { alert('Demo data is saved automatically in this browser. Use Download Data for a backup.'); return; }
         setMirroringStatus(prev => ({ ...prev, isSyncing: true }));
         try {
             const res = await fetch(`${import.meta.env.VITE_SHEETS_SYNC_URL || 'http://localhost:8787'}/sync-all`, { method: 'POST' });
@@ -1166,7 +1123,9 @@ export default function App() {
     const [addUserLoading, setAddUserLoading] = useState(false);
     const [addUserError, setAddUserError] = useState<string | null>(null);
     const [loginEmail, setLoginEmail] = useState('');
+    const [loginPassword, setLoginPassword] = useState('');
     const [loginError, setLoginError] = useState<string | null>(null);
+    const [loginMessage, setLoginMessage] = useState<string | null>(null);
     const [loginLoading, setLoginLoading] = useState(false);
 
     // Machine calculation config (editable by admin)
@@ -1288,6 +1247,10 @@ export default function App() {
     };
 
     const saveConfig = async (cfg: typeof machineConfig) => {
+        if (Object.values(cfg).some(value => typeof value !== 'number' || !Number.isFinite(value) || value <= 0)) {
+            alert('All calculation settings must be greater than zero.');
+            return;
+        }
         setConfigSaving(true);
         try {
             await setDoc(doc(db, 'settings', 'calculations'), cfg);
@@ -1390,6 +1353,12 @@ export default function App() {
     };
 
     const handleApproveLog = async (log: MaintenanceLog) => {
+        if (isLocalDemo && userProfile) {
+            const note = 'Reviewed in administrative tools'; if (note === null) return;
+            try { await reviewServiceLog(userProfile, log.id!, 'approve', note); }
+            catch (error) { alert(error instanceof Error ? error.message : 'Could not review service log.'); }
+            return;
+        }
         if (!user || !userProfile) return;
 
         const nextStatusMap: Record<string, MaintenanceLog['approvalStatus']> = {
@@ -1401,7 +1370,7 @@ export default function App() {
 
         const nextRoleMap: Record<string, UserRole> = {
             'pending_area_manager': 'district_manager',
-            'pending_district_manager': 'farm_mechanization',
+            'pending_district_manager': 'state_manager',
             'pending_farm_mech': 'admin'
         };
         const nextRole = nextRoleMap[log.approvalStatus];
@@ -1444,6 +1413,12 @@ export default function App() {
     };
 
     const handleRejectLog = async (log: MaintenanceLog) => {
+        if (isLocalDemo && userProfile) {
+            const note = prompt('Reason for rejection:'); if (note === null) return;
+            try { await reviewServiceLog(userProfile, log.id!, 'reject', note); }
+            catch (error) { alert(error instanceof Error ? error.message : 'Could not review service log.'); }
+            return;
+        }
         if (!user) return;
         try {
             await updateDoc(doc(db, 'maintenance_logs', log.id!), {
@@ -1475,21 +1450,19 @@ export default function App() {
     const [isUpdating, setIsUpdating] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const [rolePermissions, setRolePermissions] = useState<Record<UserRole, Permission[]>>({
-        admin: ['assign_machines', 'view_reports', 'perform_maintenance', 'approve_maintenance', 'update_readings', 'manage_users', 'initialize_fleet'],
-        farm_mechanization: ['assign_machines', 'view_reports', 'perform_maintenance', 'approve_maintenance', 'update_readings', 'manage_users'],
+        farm_mechanization: ['view_reports', 'approve_maintenance'],
+        admin: ['assign_machines', 'view_reports', 'perform_maintenance', 'approve_maintenance', 'update_readings', 'manage_users', 'initialize_fleet', 'edit_machine_metadata'],
+        state_manager: ['assign_machines', 'view_reports', 'perform_maintenance', 'approve_maintenance', 'update_readings', 'manage_users', 'edit_machine_metadata'],
         district_manager: ['assign_machines', 'view_reports', 'approve_maintenance', 'manage_users', 'edit_machine_metadata'],
         area_manager: ['assign_machines', 'view_reports', 'approve_maintenance', 'manage_users', 'edit_machine_metadata'],
-        community_facilitator: ['assign_machines', 'view_reports', 'update_readings', 'edit_machine_metadata'],
-        operator: ['update_readings', 'edit_machine_metadata']
+        cf: ['assign_machines', 'view_reports', 'update_readings', 'edit_machine_metadata'],
+        jcf: ['update_readings', 'edit_machine_metadata']
     });
 
     const hasPermission = (permission: Permission) => {
         if (!userProfile) return false;
         // Admin always has all permissions
         if (userProfile.role === 'admin') return true;
-        if (permission === 'manage_users' && (userProfile.role === 'district_manager' || userProfile.role === 'area_manager')) {
-            return true;
-        }
 
         // Check if user has specific permission overrides
         if (userProfile.permissions?.includes(permission)) return true;
@@ -1501,9 +1474,10 @@ export default function App() {
     const isAdmin = userProfile?.role === 'admin';
     const isDistrictManager = userProfile?.role === 'district_manager';
     const isAreaManager = userProfile?.role === 'area_manager';
-    const isFacilitator = userProfile?.role === 'community_facilitator';
-    const isOperator = userProfile?.role === 'operator';
+    const isFacilitator = userProfile?.role === 'cf';
+    const isOperator = userProfile?.role === 'jcf';
     const isFarmMech = userProfile?.role === 'farm_mechanization';
+    const isStateManager = userProfile?.role === 'state_manager';
     const canManageUsers = hasPermission('manage_users');
     const canAccessSettingsTab = isAdmin || canManageUsers;
 
@@ -1511,227 +1485,151 @@ export default function App() {
     const userRoleLabel = useMemo(() => {
         if (isAdmin) return 'Farm Mechanization Admin';
         if (isFarmMech) return 'Farm Mechanization Team';
+        if (isStateManager) return 'State Manager';
         if (isDistrictManager) return 'District Manager';
         if (isAreaManager) return 'Area Manager';
         if (isFacilitator) return 'Community Facilitator';
         return 'Operator';
     }, [userProfile, isAdmin, isFarmMech, isDistrictManager, isAreaManager, isFacilitator]);
 
-    // --- Simple Email Login (no Firebase Auth) ---
+    const enterDemo = (profile: UserProfile) => {
+        sessionStorage.setItem(DEMO_SESSION_KEY, profile.uid);
+        setUser({ uid: profile.uid, email: profile.email, displayName: profile.displayName });
+        setUserProfile(profile);
+        setSelectedPlanter(null);
+        setActiveActionModal(null);
+        setSearchTerm('');
+        setFilterMandal('All');
+        setFilterDistrict('All');
+        setFilterFacilitator('All');
+        setAssignedPage(1); setUnassignedPage(1);
+        setActiveTab('dashboard');
+        setShowAddMachineModal(false);
+        setShowTransferModal(false);
+        setShowNotifications(false);
+        setSelectedMachineIds([]);
+        setLoading(false);
+    };
+
+    // --- Email & Password Login (Firebase Auth) ---
     const handleLogin = async () => {
         const email = loginEmail.trim().toLowerCase();
         if (!email) { setLoginError('Please enter your email.'); return; }
+        if (isLocalDemo) {
+            const profile = allUsers.find(candidate => candidate.email.toLowerCase() === email);
+            if (profile) enterDemo(profile);
+            else setLoginError('Choose a demo account below or use an account created in Team settings.');
+            return;
+        }
+        if (!loginPassword) { setLoginError('Please enter your password.'); return; }
+        
         setLoginLoading(true);
         setLoginError(null);
+        setLoginMessage(null);
         try {
-            // Look up user by email in local snapshot first for instant offline-friendly login
-            let profile = allUsers.find(u => u.email.toLowerCase() === email) || null;
-
-            if (!profile) {
-                try {
-                    // Fallback to active query with 2.5s timeout
-                    const q = query(collection(db, 'users'), where('email', '==', email));
-                    const snap = await Promise.race([
-                        getDocs(q),
-                        new Promise<null>((resolve) => setTimeout(() => resolve(null), 2500))
-                    ]);
-                    if (snap && !snap.empty) {
-                        profile = snap.docs[0].data() as UserProfile;
-                    }
-                } catch (queryErr) {
-                    console.warn('Firestore active query warning:', queryErr);
-                }
-            }
-
-            if (!profile && (email === 'ganeshkeesara123@gmail.com' || email === 'ganeskeesara123@gmail.com' || email.includes('admin'))) {
-                // Auto-create admin profile immediately
-                const uid = `admin_${Date.now()}`;
-                profile = { uid, email, role: 'admin', displayName: 'Admin' };
-                // Non-blocking background sync
-                void setDoc(doc(db, 'users', uid), profile).catch(e => console.warn('Could not write admin to Firestore:', e));
-                void syncFirestoreDocumentData('users', uid, profile as unknown as Record<string, unknown>);
-            }
-
-            if (!profile) {
-                setLoginError('No account found for this email. Ask your admin to add you first.');
-                setLoginLoading(false);
-                return;
-            }
-
-            const simpleUser = { uid: profile.uid, email: profile.email, displayName: profile.displayName };
-            localStorage.setItem('planter_session', JSON.stringify(simpleUser));
-            setUserProfile(profile);
-            setUser(simpleUser);
+            await signInWithEmailAndPassword(auth, email, loginPassword);
         } catch (err) {
-            console.error('Login failed:', err);
+            console.error('Failed to sign in:', err);
             if (err instanceof Error) {
-                setLoginError(`Login failed: ${err.message}`);
+                setLoginError(`Sign in failed: ${err.message}`);
             } else {
-                setLoginError(`Login failed: ${JSON.stringify(err)}`);
+                setLoginError('An unknown error occurred.');
             }
         } finally {
             setLoginLoading(false);
         }
     };
 
-    const handleLogout = () => {
-        localStorage.removeItem('planter_session');
-        setUser(null);
-        setUserProfile(null);
+    const handleLogout = async () => {
+        try {
+            if (isLocalDemo) sessionStorage.removeItem(DEMO_SESSION_KEY);
+            else await signOut(auth);
+            setUser(null);
+            setUserProfile(null);
+        } catch (error) {
+            console.error('Logout failed', error);
+        }
     };
 
-    // Restore session from localStorage on mount with failsafe timer
+    // Listen for Auth State Changes
     useEffect(() => {
-        const safetyTimer = setTimeout(() => {
+        if (isLocalDemo) {
+            const uid = sessionStorage.getItem(DEMO_SESSION_KEY);
+            if (uid) void getDoc(doc(db, 'users', uid)).then(snapshot => {
+                if (snapshot.exists()) enterDemo(snapshot.data() as UserProfile);
+            });
             setLoading(false);
-        }, 1500);
-
-        const stored = localStorage.getItem('planter_session');
-        if (stored) {
-            try {
-                const simpleUser = JSON.parse(stored) as { uid: string; email: string; displayName: string };
-                const defaultRole = (simpleUser.email === 'ganeshkeesara123@gmail.com' || simpleUser.email === 'ganeskeesara123@gmail.com') ? 'admin' : 'operator';
-                setUserProfile({ uid: simpleUser.uid, email: simpleUser.email, role: defaultRole as UserRole, displayName: simpleUser.displayName || 'User' });
-                setUser(simpleUser);
-
-                (async () => {
-                    try {
-                        const q = query(collection(db, 'users'), where('email', '==', simpleUser.email));
-                        const snap = await Promise.race([
-                            getDocs(q),
-                            new Promise<null>((resolve) => setTimeout(() => resolve(null), 2000))
-                        ]);
-                        if (snap && !snap.empty) {
-                            setUserProfile(snap.docs[0].data() as UserProfile);
-                        }
-                    } catch (e) {
-                        console.warn('Session profile check error:', e);
-                    } finally {
-                        setLoading(false);
-                        clearTimeout(safetyTimer);
-                    }
-                })();
-            } catch {
-                localStorage.removeItem('planter_session');
-                setLoading(false);
-                clearTimeout(safetyTimer);
-            }
-        } else {
-            setLoading(false);
-            clearTimeout(safetyTimer);
+            return;
         }
 
-        return () => clearTimeout(safetyTimer);
+        const unsubscribe = onAuthStateChanged(auth, async (authUser) => {
+            if (authUser) {
+                const simpleUser = { uid: authUser.uid, email: authUser.email || '', displayName: authUser.displayName || 'User' };
+                setUser(simpleUser);
+                
+                try {
+                    const profileDoc = await getDoc(doc(db, 'users', authUser.uid));
+                    if (profileDoc.exists()) {
+                        setUserProfile(profileDoc.data() as UserProfile);
+                    } else {
+                        // For auto-created admins or fallback if firestore doc is delayed
+                        const token = await authUser.getIdTokenResult();
+                        const role = (token.claims.role as UserRole) || 'jcf';
+                        setUserProfile({ uid: authUser.uid, email: simpleUser.email, role, displayName: simpleUser.displayName });
+                    }
+                } catch (error) {
+                    console.error('Error fetching user profile:', error);
+                }
+            } else {
+                setUser(null);
+                setUserProfile(null);
+            }
+            setLoading(false);
+        });
+
+        return () => unsubscribe();
     }, []);
 
     // Planters Listener
     useEffect(() => {
         if (!user) return;
         const unsubscribe = onSnapshot(collection(db, 'planters'), (snapshot) => {
-            const data = snapshot.docs.map(doc => doc.data() as Planter);
+            const data = snapshot.docs.map(snapshotDoc => {
+                const planter = snapshotDoc.data() as Planter;
+                const structuredLocation = typeof planter.location === 'object' ? planter.location : undefined;
+                return {
+                    ...planter,
+                    id: planter.id || snapshotDoc.id,
+                    location: formatLocation(planter.location),
+                    mandal: structuredLocation?.mandal || planter.mandal || '',
+                    district: structuredLocation?.district || planter.district || '',
+                    lat: structuredLocation?.gps?.lat ?? planter.lat,
+                    lng: structuredLocation?.gps?.lng ?? planter.lng,
+                    operatingStatus: planter.operatingStatus || getOperatingStatus(planter.status),
+                    lastUpdated: planter.lastUpdated || planter.registrationDate || new Date().toISOString(),
+                    // Older records may predate the first counter reading.
+                    lastReading: Number.isFinite(planter.lastReading) ? planter.lastReading : 0,
+                };
+            });
             setPlanters(data.sort((a, b) => a.id.localeCompare(b.id)));
         });
         return () => unsubscribe();
     }, [user]);
 
+    // One shared feed keeps Activity, analytics and detail views consistent.
     useEffect(() => {
-        if (!user || activeTab !== 'reports') return;
-
-        const fetchReport = async () => {
-            setIsReportLoading(true);
-            const now = new Date();
-            let startDate = new Date();
-            const endDate = now;
-
-            if (reportPeriod === 'daily') startDate.setHours(0, 0, 0, 0);
-            else if (reportPeriod === 'weekly') startDate.setDate(now.getDate() - 7);
-            else if (reportPeriod === 'monthly') startDate.setMonth(now.getMonth() - 1);
-
-            const q = query(
-                collection(db, 'updates'),
-                where('timestamp', '>=', startDate.toISOString()),
-                orderBy('timestamp', 'desc')
-            );
-
-            try {
-                const snapshot = await getDocs(q);
-                const fetchedUpdates = snapshot.docs.map(doc => doc.data() as ReadingUpdate);
-
-                const totals = fetchedUpdates.reduce((acc, curr) => ({
-                    distance: acc.distance + curr.distanceKm,
-                    area: acc.area + curr.areaAcres,
-                }), { distance: 0, area: 0 });
-
-                const planterStats: Record<string, number> = {};
-                fetchedUpdates.forEach(u => {
-                    planterStats[u.planterId] = (planterStats[u.planterId] || 0) + u.areaAcres;
-                });
-
-                const top = Object.entries(planterStats)
-                    .map(([id, area]) => ({ id, area }))
-                    .sort((a, b) => b.area - a.area)
-                    .slice(0, 5);
-
-                const uniqueFarmers = new Set(fetchedUpdates.map(u => u.operatorName || u.updatedBy)).size;
-
-                const periodMaintenance = maintenanceLogs.filter(log => {
-                    const logDate = new Date(log.timestamp);
-                    return logDate >= startDate && logDate <= endDate;
-                });
-                const totalCost = periodMaintenance.reduce((sum, log) => sum + (log.cost || 0), 0);
-
-                setReportData({
-                    totalDistance: totals.distance,
-                    totalArea: totals.area,
-                    updateCount: fetchedUpdates.length,
-                    topPlanters: top,
-                    totalMaintenanceCost: totalCost,
-                    uniqueFarmers: uniqueFarmers
-                });
-            } catch (err) {
-                console.error('Report fetch failed:', err);
-            } finally {
-                setIsReportLoading(false);
-            }
-        };
-
-        fetchReport();
-    }, [user, activeTab, reportPeriod]);
-
-    // Selected Planter Updates Listener
-    useEffect(() => {
-        if (!selectedPlanter) {
-            setUpdates([]);
-            return;
-        }
-        const q = query(
-            collection(db, 'updates'),
-            where('planterId', '==', selectedPlanter.id),
-            orderBy('timestamp', 'desc'),
-            limit(10)
-        );
-        const unsubscribe = onSnapshot(q, (snapshot) => {
-            setUpdates(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as ReadingUpdate)));
+        const unsubscribe = onSnapshot(query(collection(db, 'updates'), orderBy('timestamp', 'desc')), snapshot => {
+            setUpdates(snapshot.docs.map(record => ({ ...record.data(), id: record.id } as ReadingUpdate)));
         });
-        return () => unsubscribe();
-    }, [selectedPlanter]);
+        return unsubscribe;
+    }, []);
 
-    // Selected Planter Maintenance Logs Listener
     useEffect(() => {
-        if (!selectedPlanter) {
-            setMaintenanceLogs([]);
-            return;
-        }
-        const q = query(
-            collection(db, 'maintenance_logs'),
-            where('planterId', '==', selectedPlanter.id),
-            orderBy('timestamp', 'desc')
-        );
-        const unsubscribe = onSnapshot(q, (snapshot) => {
-            setMaintenanceLogs(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as MaintenanceLog)));
+        const unsubscribe = onSnapshot(collection(db, 'maintenance_logs'), snapshot => {
+            setMaintenanceLogs(snapshot.docs.map(record => (normalizeServiceLog({ ...record.data(), id: record.id }))));
         });
-        return () => unsubscribe();
-    }, [selectedPlanter]);
+        return unsubscribe;
+    }, []);
 
     // Selected Planter Maintenance Requests Listener
     useEffect(() => {
@@ -1768,7 +1666,7 @@ export default function App() {
 
         const qLog = query(collection(db, 'maintenance_logs'), orderBy('timestamp', 'desc'), limit(50));
         const unsubscribeLog = onSnapshot(qLog, (snapshot) => {
-            setAllMaintenanceLogs(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as MaintenanceLog)));
+            setAllMaintenanceLogs(snapshot.docs.map(doc => (normalizeServiceLog({ id: doc.id, ...doc.data() }))));
         });
 
         return () => {
@@ -1830,7 +1728,7 @@ export default function App() {
 
     const manageableUsers = useMemo(() => {
         if (!userProfile || !user) return [];
-        if (isAdmin) return allUsers.filter(candidate => candidate.uid !== user.uid);
+        if (isAdmin) return allUsers.filter(candidate => candidate.uid !== user.uid && canRoleManageRole('admin', candidate.role));
         if (isFarmMech) return allUsers.filter(candidate => candidate.uid !== user.uid && candidate.role !== 'admin');
         return scopedUsers.filter(candidate =>
             candidate.uid !== user.uid &&
@@ -1884,7 +1782,7 @@ export default function App() {
     };
 
     const resetUserForm = (roleOverride?: UserRole) => {
-        const nextRole = roleOverride || manageableRoleOptions[0] || 'operator';
+        const nextRole = roleOverride || manageableRoleOptions[0] || 'jcf';
         setAddUserForm(createEmptyUserForm(nextRole, getSuggestedParentId(nextRole)));
         setEditingUserId(null);
         setAddUserError(null);
@@ -1898,14 +1796,14 @@ export default function App() {
     const transferRecipients = useMemo(() => {
         if (!user) return [];
         if (isAdmin) return allUsers.filter(candidate => candidate.uid !== user.uid && candidate.role !== 'admin');
-        if (isFarmMech) return allUsers.filter(candidate => candidate.uid !== user.uid && candidate.role !== 'admin' && candidate.role !== 'farm_mechanization');
+        if (isFarmMech) return allUsers.filter(candidate => candidate.uid !== user.uid && candidate.role !== 'admin' && candidate.role !== 'state_manager');
         return manageableUsers;
     }, [allUsers, isAdmin, isFarmMech, manageableUsers, user]);
 
     const canViewHierarchyTab = !!userProfile && !isOperator;
 
     const canManagePlanterMetadata = (planter: Planter) => {
-        if (!user?.uid) return false;
+        if (!user?.uid || !hasPermission('edit_machine_metadata')) return false;
         if (isAdmin || isFarmMech) return true;
         if (planter.currentHolderId === user.uid) return true;
         return scopedUserIdSet.has(planter.currentHolderId);
@@ -1915,23 +1813,28 @@ export default function App() {
         const isPlanterInScope = isAdmin || isFarmMech || myPlanterIdSet.has(request.planterId);
 
         if (!isPlanterInScope) return false;
-        if (isAdmin) return ['pending_admin', 'approved', 'in_progress', 'completed', 'rejected', 'cancelled'].includes(request.status);
         return true;
     };
 
     const canApproveMaintenanceRequest = (request: MaintenanceRequest) => {
         if (request.status === 'pending_area_manager') return isAreaManager;
         if (request.status === 'pending_district_manager') return isDistrictManager;
+        if (request.status === 'pending_state_manager') return isStateManager;
         if (request.status === 'pending_farm_mech') return isFarmMech;
-        if (request.status === 'pending_admin') return isAdmin;
+        if (request.status === 'pending_admin') return isFarmMech;
         return false;
     };
 
     const canOperateMaintenanceRequest = (request: MaintenanceRequest) => {
-        return (isAdmin || isFarmMech) && (request.status === 'approved' || request.status === 'in_progress');
+        return isAdmin && (request.status === 'approved' || request.status === 'in_progress');
     };
 
     const handleApproveRequest = async (request: MaintenanceRequest) => {
+        if (isLocalDemo && userProfile) {
+            try { await reviewMaintenance(userProfile, request.id!, 'approve', 'Reviewed in administrative tools'); }
+            catch (error) { alert(error instanceof Error ? error.message : 'Could not approve request.'); }
+            return;
+        }
         if (!user) return;
 
         const nextStatus = getNextRequestStatus(request.status);
@@ -1982,6 +1885,12 @@ export default function App() {
     };
 
     const handleRejectRequest = async (request: MaintenanceRequest) => {
+        if (isLocalDemo && userProfile) {
+            const note = prompt('Reason for rejection:'); if (note === null) return;
+            try { await reviewMaintenance(userProfile, request.id!, 'reject', note); }
+            catch (error) { alert(error instanceof Error ? error.message : 'Could not reject request.'); }
+            return;
+        }
         if (!user) return;
         try {
             await updateDoc(doc(db, 'maintenance_requests', request.id!), {
@@ -2002,6 +1911,11 @@ export default function App() {
     };
 
     const handleStartRequestWork = async (request: MaintenanceRequest) => {
+        if (isLocalDemo && userProfile) {
+            try { await startMaintenance(userProfile, request.id!); }
+            catch (error) { alert(error instanceof Error ? error.message : 'Could not start repair.'); }
+            return;
+        }
         try {
             await updateDoc(doc(db, 'maintenance_requests', request.id!), {
                 status: 'in_progress'
@@ -2025,6 +1939,7 @@ export default function App() {
     };
 
     const handleCompleteRequestWork = async (request: MaintenanceRequest) => {
+        if (isLocalDemo) { window.location.href = '/?page=maintenance'; return; }
         try {
             await updateDoc(doc(db, 'maintenance_requests', request.id!), {
                 status: 'completed'
@@ -2043,6 +1958,7 @@ export default function App() {
     };
 
     const handleCancelRequest = async (request: MaintenanceRequest) => {
+        if (isLocalDemo) { alert('Requests must be reviewed with a recorded reason. A stopped machine is restored only after Admin records repair completion and photos.'); return; }
         try {
             await updateDoc(doc(db, 'maintenance_requests', request.id!), {
                 status: 'cancelled'
@@ -2234,9 +2150,24 @@ export default function App() {
         setAddUserLoading(true);
         setAddUserError(null);
         try {
-            const targetUid = editingUserId || `pending_${addUserForm.email.trim().replace(/[^a-z0-9]/gi, '_')}_${Date.now()}`;
+            let targetUid = editingUserId;
+
+            if (!editingUserId && isLocalDemo) targetUid = crypto.randomUUID();
+            if (!editingUserId && !isLocalDemo) {
+                // Create a secondary Firebase app to prevent logging out the Admin
+                const secondaryApp = initializeApp(auth.app.options, 'SecondaryAppForUserCreation' + Date.now());
+                const secondaryAuth = getAuth(secondaryApp);
+                
+                // Create user with a strong random password
+                const randomPassword = Math.random().toString(36).slice(-10) + 'A1!@';
+                const userCredential = await createUserWithEmailAndPassword(secondaryAuth, addUserForm.email.trim().toLowerCase(), randomPassword);
+                targetUid = userCredential.user.uid;
+                
+                await signOut(secondaryAuth);
+            }
 
             const newProfile: any = {
+                uid: targetUid,
                 email: addUserForm.email.trim().toLowerCase(),
                 role: addUserForm.role,
                 displayName: addUserForm.displayName.trim(),
@@ -2247,20 +2178,55 @@ export default function App() {
                 parentId: resolvedParentId || ''
             };
 
-            if (!editingUserId) {
-                newProfile.uid = targetUid;
+            await setDoc(doc(db, 'users', targetUid!), newProfile, { merge: true });
+            
+            if (['cf', 'jcf'].includes(addUserForm.role)) {
+                await setDoc(doc(db, 'publicProfiles', targetUid!), {
+                    uid: targetUid,
+                    displayName: addUserForm.displayName.trim(),
+                    role: addUserForm.role
+                }, { merge: true });
+            } else {
+                await deleteDoc(doc(db, 'publicProfiles', targetUid!)).catch(() => {});
             }
 
-            await setDoc(doc(db, 'users', targetUid), newProfile, { merge: true });
-            void syncFirestoreDocument('users', targetUid);
+            void syncFirestoreDocument('users', targetUid!);
+            
+            if (!editingUserId && !isLocalDemo) {
+                // Send them an invite link (optional, but helpful for first-time login)
+                const actionCodeSettings = {
+                    url: window.location.origin,
+                    handleCodeInApp: true,
+                };
+                await sendSignInLinkToEmail(auth, addUserForm.email.trim().toLowerCase(), actionCodeSettings).catch(e => {
+                    console.warn('Could not send invite email, but user was created.', e);
+                });
+            }
+
             resetUserForm();
             setShowAddUserForm(false);
-        } catch (err) {
+        } catch (err: any) {
             console.error('Failed to add user:', err);
-            setAddUserError('Failed to add user. Please try again.');
+            setAddUserError(err.message || 'Failed to add user. Please try again.');
         } finally {
             setAddUserLoading(false);
         }
+    };
+
+    const removeTeamMember = async (profile: UserProfile) => {
+        if (!canManageUserRecord(profile)) return;
+        if (allUsers.some(candidate => candidate.parentId === profile.uid)) {
+            alert('Reassign this user’s reporting team before removing the account.'); return;
+        }
+        if (planters.some(machine => machine.currentHolderId === profile.uid)) {
+            alert('Transfer this user’s machines before removing the account.'); return;
+        }
+        if (!confirm(`Remove ${profile.displayName} from the organization?`)) return;
+        try {
+            await deleteDoc(doc(db, 'users', profile.uid));
+            await deleteDoc(doc(db, 'publicProfiles', profile.uid));
+            void deleteSheetDocument('users', profile.uid);
+        } catch (error) { alert(error instanceof Error ? error.message : 'Could not remove user.'); }
     };
 
     const initializeMachines = async () => {
@@ -2312,6 +2278,72 @@ export default function App() {
     }, [planters, isAdmin, isFarmMech, scopedUserIdSet]);
 
     const myPlanterIdSet = useMemo(() => new Set(myPlanters.map(p => p.id)), [myPlanters]);
+
+    useEffect(() => {
+        if (!user || activeTab !== 'reports') return;
+
+        const fetchReport = async () => {
+            setIsReportLoading(true);
+            const now = new Date();
+            let startDate = new Date();
+            const endDate = now;
+
+            if (reportPeriod === 'daily') startDate.setHours(0, 0, 0, 0);
+            else if (reportPeriod === 'weekly') startDate.setDate(now.getDate() - 7);
+            else if (reportPeriod === 'monthly') startDate.setMonth(now.getMonth() - 1);
+
+            const q = query(
+                collection(db, 'updates'),
+                where('timestamp', '>=', startDate.toISOString()),
+                orderBy('timestamp', 'desc')
+            );
+
+            try {
+                const snapshot = await getDocs(q);
+                const fetchedUpdates = snapshot.docs.map(doc => doc.data() as ReadingUpdate).filter(update => myPlanterIdSet.has(update.planterId));
+
+                const totals = fetchedUpdates.reduce((acc, curr) => ({
+                    distance: acc.distance + curr.distanceKm,
+                    area: acc.area + curr.areaAcres,
+                }), { distance: 0, area: 0 });
+
+                const planterStats: Record<string, number> = {};
+                fetchedUpdates.forEach(u => {
+                    planterStats[u.planterId] = (planterStats[u.planterId] || 0) + u.areaAcres;
+                });
+
+                const top = Object.entries(planterStats)
+                    .map(([id, area]) => ({ id, area }))
+                    .sort((a, b) => b.area - a.area)
+                    .slice(0, 5);
+
+                const uniqueFarmers = new Set(fetchedUpdates.map(u => u.jcfName || u.updatedBy)).size;
+
+                const periodMaintenance = maintenanceLogs.filter(log => {
+                    const logDate = new Date(log.timestamp);
+                    return myPlanterIdSet.has(log.planterId) && logDate >= startDate && logDate <= endDate;
+                });
+                const totalCost = periodMaintenance.reduce((sum, log) => sum + (log.cost || 0), 0);
+
+                setReportData({
+                    totalDistance: totals.distance,
+                    totalArea: totals.area,
+                    updateCount: fetchedUpdates.length,
+                    topPlanters: top,
+                    totalMaintenanceCost: totalCost,
+                    uniqueFarmers: uniqueFarmers
+                });
+            } catch (err) {
+                console.error('Report fetch failed:', err);
+            } finally {
+                setIsReportLoading(false);
+            }
+        };
+
+        fetchReport();
+    }, [user, activeTab, reportPeriod, myPlanterIdSet, maintenanceLogs, updates]);
+
+
 
     const visibleMaintenanceRequests = useMemo(
         () => allMaintenanceRequests.filter(request => canUserSeeMaintenanceRequest(request)),
@@ -2385,7 +2417,7 @@ export default function App() {
     const ITEMS_PER_PAGE = 12;
 
     const fleetMachineData = useMemo(() => {
-        const adminUids = allUsers.filter(u => u.role === 'admin' || u.role === 'farm_mechanization').map(u => u.uid);
+        const adminUids = allUsers.filter(u => u.role === 'admin' || u.role === 'state_manager').map(u => u.uid);
         const assignedPlanters = sortedPlanters.filter(p => p.currentHolderId && !adminUids.includes(p.currentHolderId));
         const unassignedPlanters = sortedPlanters.filter(p => !p.currentHolderId || adminUids.includes(p.currentHolderId));
 
@@ -2435,7 +2467,9 @@ export default function App() {
     }, [myPlanters]);
 
     const scanPathMatch = window.location.pathname.match(/^\/scan\/(.+)$/);
-    if (scanPathMatch) {
+    if (window.location.pathname === '/scan' || (scanPathMatch && (scanPathMatch[1] === 'sample' || scanPathMatch[1] === 'scan'))) {
+        return <CameraScanner />;
+    } else if (scanPathMatch) {
         return <PublicScanFlow machineId={scanPathMatch[1]} />;
     }
 
@@ -2478,21 +2512,39 @@ export default function App() {
                     </div>
 
                     <div className="space-y-4 text-left">
-                        <div>
-                            <label className="text-[10px] font-bold uppercase tracking-widest text-slate-400 mb-1.5 block">Your Email</label>
-                            <input
-                                type="email"
-                                placeholder="you@example.com"
-                                value={loginEmail}
-                                onChange={e => { setLoginEmail(e.target.value); setLoginError(null); }}
-                                onKeyDown={e => e.key === 'Enter' && handleLogin()}
-                                className="w-full px-5 py-4 bg-slate-100 rounded-2xl border-none focus:ring-2 focus:ring-emerald-500/30 text-sm outline-none"
-                                autoFocus
-                            />
+                        {!isLocalDemo && <>
+                        <div className="space-y-3">
+                            <div>
+                                <label className="text-[10px] font-bold uppercase tracking-widest text-slate-400 mb-1.5 block">Your Email</label>
+                                <input
+                                    type="email"
+                                    placeholder="you@example.com"
+                                    value={loginEmail}
+                                    onChange={e => { setLoginEmail(e.target.value); setLoginError(null); }}
+                                    className="w-full px-5 py-4 bg-slate-100 rounded-2xl border-none focus:ring-2 focus:ring-emerald-500/30 text-sm outline-none"
+                                    autoFocus
+                                />
+                            </div>
+                            <div>
+                                <label className="text-[10px] font-bold uppercase tracking-widest text-slate-400 mb-1.5 block">Password</label>
+                                <input
+                                    type="password"
+                                    placeholder="Enter your password"
+                                    value={loginPassword}
+                                    onChange={e => { setLoginPassword(e.target.value); setLoginError(null); }}
+                                    onKeyDown={e => e.key === 'Enter' && handleLogin()}
+                                    className="w-full px-5 py-4 bg-slate-100 rounded-2xl border-none focus:ring-2 focus:ring-emerald-500/30 text-sm outline-none"
+                                />
+                            </div>
                         </div>
                         {loginError && (
                             <p className="text-sm text-red-600 flex items-center gap-2">
                                 <AlertCircle className="w-4 h-4 flex-shrink-0" /> {loginError}
+                            </p>
+                        )}
+                        {loginMessage && (
+                            <p className="text-sm text-emerald-600 flex items-center gap-2">
+                                <CheckCircle2 className="w-4 h-4 flex-shrink-0" /> {loginMessage}
                             </p>
                         )}
                         <button
@@ -2504,25 +2556,32 @@ export default function App() {
                             {loginLoading ? 'Signing in...' : 'Sign In'}
                         </button>
 
-                        <div className="pt-2 text-center">
-                            <button
-                                type="button"
-                                onClick={() => {
-                                    setLoginEmail('ganeshkeesara123@gmail.com');
-                                    setLoginError(null);
-                                }}
-                                className="text-xs text-emerald-700 hover:text-emerald-800 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200/80 rounded-xl px-3.5 py-2 font-medium transition-all inline-flex items-center gap-1.5"
-                            >
-                                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
-                                Fill Admin Email: <span className="font-mono font-bold">ganeshkeesara123@gmail.com</span>
-                            </button>
-                        </div>
+                        </>}
+                        {isLocalDemo && (
+                            <div className="pt-4 text-center">
+                                <label htmlFor="demo-role" className="block text-sm font-semibold mb-2 text-slate-700">Choose a demo role</label>
+                                <select id="demo-role" value={demoAccountId} onChange={event => setDemoAccountId(event.target.value)} className="w-full rounded-xl bg-slate-100 p-3 mb-3 text-sm">
+                                    {(allUsers.length ? allUsers : demoUsers).map(profile => <option key={profile.uid} value={profile.uid}>{profile.displayName} ({profile.role.replaceAll('_', ' ')})</option>)}
+                                </select>
+                                <button
+                                    type="button"
+                                    onClick={() => {
+                                        enterDemo(allUsers.find(profile => profile.uid === demoAccountId) || demoUsers[0]);
+                                        setLoginError(null);
+                                    }}
+                                    className="text-sm text-emerald-700 hover:bg-emerald-100 bg-emerald-50 border border-emerald-200 rounded-xl px-5 py-3 font-semibold transition-all"
+                                >
+                                    Demo login
+                                </button>
+                                <p className="mt-2 text-xs text-slate-500">No password required. Changes are saved in this browser.</p>
+                            </div>
+                        )}
                     </div>
 
                     <div className="mt-8 rounded-2xl border border-slate-200/70 bg-slate-50/80 p-4 text-left">
                         <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400 mb-2">Access Note</p>
                         <p className="text-[12px] text-slate-500 leading-relaxed">
-                            Sign in with your registered email (no password needed). You can use the Admin account above for full management access.
+                            {isLocalDemo ? 'Local demo · six roles · browser storage. Use the account switcher to follow a workflow across roles.' : 'Sign in with your registered email and password to access your fleet data.'}
                         </p>
                     </div>
                 </motion.div>
@@ -2555,18 +2614,6 @@ export default function App() {
                 setShowNotifications(false);
             }}
             onLogout={handleLogout}
-            onRoleChange={async (newRole) => {
-                if (user) {
-                    const userDocRef = doc(db, 'users', user.uid);
-                    const updates: any = { role: newRole };
-                    if (newRole === 'area_manager' && !userProfile?.assignedMandal) updates.assignedMandal = 'Mandal 1';
-                    if (newRole === 'district_manager' && !userProfile?.assignedDistrict) updates.assignedDistrict = 'Hyderabad';
-                    if (newRole === 'operator' && !userProfile?.assignedMandal) updates.assignedMandal = 'Mandal 1';
-                    await updateDoc(userDocRef, updates);
-                    void syncFirestoreDocument('users', user.uid);
-                    setUserProfile(prev => prev ? { ...prev, ...updates } : null);
-                }
-            }}
             isAdmin={isAdmin}
             pendingAssignments={assignments.filter(a => a.toUserId === user.uid && a.status === 'pending').length}
             unreadMessages={messages.filter(m => !m.read && m.receiverId === user.uid).length}
@@ -2575,7 +2622,38 @@ export default function App() {
             canViewReports={hasPermission('view_reports')}
             onMoreClick={() => setActiveTab('messages')}
         >
-
+            {isLocalDemo && (
+                <section className="mb-6 rounded-2xl border border-emerald-200 bg-white p-4 shadow-sm" aria-label="Local demo controls">
+                    <div className="flex flex-wrap items-center gap-3">
+                        <div className="mr-auto"><p className="font-semibold text-emerald-800">Local demo workspace</p><p className="text-xs text-slate-500">Saved in this browser · switch accounts to follow each workflow</p></div>
+                        <label className="text-xs font-semibold text-slate-600" htmlFor="switch-account">Current account</label>
+                        <select id="switch-account" value={user.uid} onChange={event => {
+                            const profile = allUsers.find(candidate => candidate.uid === event.target.value);
+                            if (profile) enterDemo(profile);
+                        }} className="max-w-full rounded-xl border border-slate-200 p-2 text-sm">
+                            {allUsers.map(profile => <option key={profile.uid} value={profile.uid}>{profile.displayName} · {profile.role.replaceAll('_', ' ')}</option>)}
+                        </select>
+                        {(isAdmin || isFarmMech) && <>                        <button className="rounded-xl border border-slate-200 px-3 py-2 text-xs font-semibold" onClick={() => {
+                            const blob = new Blob([localStorage.getItem(DEMO_STORE_KEY) || '{}'], { type: 'application/json' });
+                            const url = URL.createObjectURL(blob); const link = document.createElement('a'); link.href = url; link.download = 'machine-tracker-demo-backup.json'; link.click(); URL.revokeObjectURL(url);
+                        }}>Export backup</button></>}
+                        {isAdmin && <button className="rounded-xl border border-rose-200 px-3 py-2 text-xs font-semibold text-rose-700" onClick={() => {
+                            if (window.confirm('Reset the local demo? This clears this browser’s demo changes and restores sample data. Export a backup first if needed.')) {
+                                localStorage.removeItem(DEMO_STORE_KEY); sessionStorage.removeItem(DEMO_SESSION_KEY); window.location.reload();
+                            }
+                        }}>Reset demo</button>}
+                    </div>
+                    <nav aria-label="Workspace pages" className="mt-3 flex flex-wrap gap-2 border-t border-slate-100 pt-3">
+                        {([
+                            ['dashboard', 'Dashboard', true], ['fleet', 'Fleet', true], ['assignments', 'Assignments', true],
+                            ['map', 'Map', true], ['reports', 'Reports', hasPermission('view_reports')],
+                            ['analytics', 'Analytics', hasPermission('view_reports')], ['hierarchy', 'Hierarchy', canViewHierarchyTab],
+                            ['messages', 'Messages', true], ['updates', 'Activity', true],
+                            ['qr_management', 'QR codes', hasPermission('initialize_fleet')], ['settings', 'Team & settings', canAccessSettingsTab],
+                        ] as const).filter(([, , visible]) => visible).map(([tab, label]) => <button key={tab} onClick={() => setActiveTab(tab)} className={cn('rounded-lg px-3 py-2 text-xs font-semibold', activeTab === tab ? 'bg-emerald-600 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200')}>{label}</button>)}
+                    </nav>
+                </section>
+            )}
             {/* Transfer Modal */}
 
             {/* Transfer Modal */}
@@ -2646,7 +2724,7 @@ export default function App() {
                             initial={{ opacity: 0, scale: 0.95 }}
                             animate={{ opacity: 1, scale: 1 }}
                             exit={{ opacity: 0, scale: 0.95 }}
-                            className="bg-white rounded-[40px] w-full max-w-lg p-8 shadow-2xl relative overflow-hidden"
+                            className="bg-white rounded-[40px] w-full max-w-lg max-h-[90dvh] overflow-y-auto p-8 shadow-2xl relative"
                         >
                             <div className="flex justify-between items-center mb-6 relative z-10">
                                 <h2 className="text-3xl font-serif">Register Machine</h2>
@@ -2684,18 +2762,25 @@ export default function App() {
                                         lastUpdated: new Date().toISOString(),
                                         gallery: []
                                     };
-                                    await setDoc(doc(db, 'planters', newPlanter.id), newPlanter);
-                                    void syncFirestoreDocumentData('planters', newPlanter.id, newPlanter as any);
+                                    newPlanter.id = newPlanter.id.trim();
+                                    if (!newPlanter.id || newPlanter.id.includes('/')) throw new Error('Enter a machine ID without slashes.');
+                                    if (planters.some(planter => planter.id === newPlanter.id)) throw new Error('A machine with this ID already exists.');
+                                    const machineData = Object.fromEntries(Object.entries(newPlanter).filter(([, value]) => value !== undefined));
+                                    await setDoc(doc(db, 'planters', newPlanter.id), machineData);
+                                    void syncFirestoreDocumentData('planters', newPlanter.id, machineData);
                                     setShowAddMachineModal(false);
                                     setNewMachineData({ id: '', type: 'Planter Pro', state: '', district: '', mandal: '', location: '', lat: '', lng: '', brand: '', model: '', serialNumber: '', purchaseDate: '', purchaseCost: '', warranty: '', manualLink: '', maintenanceSchedule: '' });
                                     createNotification({ type: 'success', title: 'Machine Registered', message: `Machine ${newPlanter.id} successfully added.` });
                                 } catch (err) {
                                     console.error(err);
-                                    alert('Failed to register machine');
+                                    alert(err instanceof Error ? err.message : 'Failed to register machine');
                                 } finally {
                                     setAddMachineLoading(false);
                                 }
                             }} className="space-y-4 relative z-10">
+                                {isLocalDemo && (
+                                    <p className="text-sm text-amber-700">Local demo: machines and updates are saved in this browser.</p>
+                                )}
 
                                 <div className="bg-[#F5F5F0]/50 p-4 rounded-2xl border border-black/5 space-y-4">
                                     <div className="flex justify-between items-center mb-1">
@@ -2918,14 +3003,53 @@ export default function App() {
                 )}
             </AnimatePresence>
 
+            <AnimatePresence>
+                {showBatchModal && (
+                    <GenerateBatchModal 
+                        isOpen={showBatchModal}
+                        onClose={() => setShowBatchModal(false)}
+                        onBatchGenerated={(newMachines, batchNo) => {
+                            // Just close and let firestore listener sync the newly generated machines
+                            setShowBatchModal(false);
+                            // Then open QR grid immediately to print them
+                            setShowQRPrint(true);
+                        }}
+                    />
+                )}
+            </AnimatePresence>
+
             <div className="space-y-6 page-enter">
-                {activeTab === 'analytics' ? (
-                    <UtilizationDashboard 
+                {activeTab === 'qr_management' ? (
+                    <QRManagementTab
                         planters={planters}
-                        updates={updates}
-                        maintenanceLogs={maintenanceLogs}
+                        onGenerateBatch={() => setShowBatchModal(true)}
+                        onPrintQRs={() => setShowQRPrint(true)}
+                        hasPermission={hasPermission('initialize_fleet')}
+                    />
+                ) : activeTab === 'analytics' ? (
+                    <UtilizationDashboard 
+                        planters={myPlanters}
+                        updates={updates.filter(update => myPlanterIdSet.has(update.planterId))}
+                        maintenanceLogs={maintenanceLogs.filter(log => myPlanterIdSet.has(log.planterId))}
                         calcArea={(revs) => calcArea(revs)}
                     />
+                ) : activeTab === 'updates' ? (
+                    <section className="space-y-5">
+                        <h1 className="text-3xl font-semibold text-slate-800">Activity</h1>
+                        <p className="text-sm text-slate-500">Counter readings and usage history for machines in your reporting branch.</p>
+                        <div className="overflow-x-auto rounded-2xl bg-white border border-slate-200">
+                            <table className="w-full text-sm text-left">
+                                <thead className="bg-slate-50 text-slate-500"><tr>{['Machine', 'Date', 'Operator', 'Reading', 'Area', 'Proof'].map(label => <th key={label} className="px-4 py-3">{label}</th>)}</tr></thead>
+                                <tbody>{updates.filter(update => myPlanterIdSet.has(update.planterId)).sort((a, b) => b.timestamp.localeCompare(a.timestamp)).map(update => <tr key={update.id} className="border-t border-slate-100">
+                                    <td className="px-4 py-3"><button className="font-semibold text-emerald-700" onClick={() => { const machine = planters.find(p => p.id === update.planterId); if (machine) setSelectedPlanter(machine); }}>{update.planterId}</button></td>
+                                    <td className="px-4 py-3 whitespace-nowrap">{format(new Date(update.timestamp), 'MMM d, HH:mm')}</td><td className="px-4 py-3">{update.updatedBy}</td>
+                                    <td className="px-4 py-3">{(update.newReading || 0).toLocaleString()}</td><td className="px-4 py-3">{(update.areaAcres || 0).toFixed(2)} ac</td>
+                                    <td className="px-4 py-3">{update.imageUrl ? <a href={update.imageUrl} target="_blank" rel="noreferrer" className="text-emerald-700">View proof</a> : '—'}</td>
+                                </tr>)}</tbody>
+                            </table>
+                            {!updates.some(update => myPlanterIdSet.has(update.planterId)) && <p className="p-8 text-center text-slate-500">No activity yet. Open a machine and submit its first reading.</p>}
+                        </div>
+                    </section>
                 ) : activeTab === 'dashboard' ? (
                     <div className="space-y-6">
                     {/* Dashboard Header */}
@@ -3096,7 +3220,7 @@ export default function App() {
                                     </div>
                                 )}
 
-                                {(isAdmin || isFarmMech) && (
+                                {isAdmin && (
                                     <div className="bg-white rounded-[32px] p-8 border border-black/5 shadow-sm">
                                         <h3 className="text-lg font-serif mb-6 flex items-center justify-between">
                                             <span>Maintenance Execution Board</span>
@@ -3123,11 +3247,12 @@ export default function App() {
 
                                 {hasPermission('approve_maintenance') && (
                                     <ApprovalQueue
-                                        logs={allMaintenanceLogs.filter(l =>
+                                        logs={allMaintenanceLogs.filter(l => myPlanterIdSet.has(l.planterId) && (
                                             (isAreaManager && l.approvalStatus === 'pending_area_manager') ||
                                             (isDistrictManager && l.approvalStatus === 'pending_district_manager') ||
+                                            (isStateManager && l.approvalStatus === 'pending_state_manager') ||
                                             (isFarmMech && l.approvalStatus === 'pending_farm_mech')
-                                        )}
+                                        ))}
                                         onApprove={handleApproveLog}
                                         onReject={handleRejectLog}
                                     />
@@ -3417,7 +3542,7 @@ export default function App() {
                                     <div className="bg-white p-8 rounded-[32px] border border-black/5 shadow-sm">
                                         <p className="text-[10px] font-bold text-[#5A5A40]/40 uppercase mb-2">Farmers Reached</p>
                                         <p className="text-4xl font-serif text-[#5A5A40]">{reportData.uniqueFarmers}</p>
-                                        <p className="text-xs text-[#5A5A40]/60 mt-1">Unique operators/farmers</p>
+                                        <p className="text-xs text-[#5A5A40]/60 mt-1">Unique jcfs/farmers</p>
                                     </div>
                                     <div className="bg-white p-8 rounded-[32px] border border-black/5 shadow-sm">
                                         <p className="text-[10px] font-bold text-[#5A5A40]/40 uppercase mb-2">Maintenance Cost</p>
@@ -3501,7 +3626,7 @@ export default function App() {
                             badges={[
                                 isAdmin ? 'Admin surface' : 'Manager surface',
                                 canManageUsers ? 'User management enabled' : 'Read only',
-                                sheetInfo?.spreadsheetUrl ? 'Sheets sync detected' : 'Sheets sync offline'
+                                isLocalDemo ? 'Browser storage active' : sheetInfo?.spreadsheetUrl ? 'Sheets sync detected' : 'Sheets sync offline'
                             ]}
                         />
 
@@ -3656,7 +3781,7 @@ export default function App() {
                                                 "text-[10px] font-bold uppercase px-3 py-1 rounded-full",
                                                 sheetInfo?.spreadsheetUrl ? "bg-emerald-100 text-emerald-700" : "bg-amber-100 text-amber-700"
                                             )}>
-                                                {sheetInfo?.spreadsheetUrl ? 'Drive Connected' : 'Fallback Mode'}
+                                                {isLocalDemo ? 'Local Storage' : sheetInfo?.spreadsheetUrl ? 'Drive Connected' : 'Fallback Mode'}
                                             </span>
                                         </div>
 
@@ -3664,7 +3789,7 @@ export default function App() {
                                             <div className="p-4 bg-[#F5F5F0] rounded-2xl">
                                                 <p className="text-[10px] font-bold uppercase tracking-widest text-[#5A5A40]/40 mb-2">Configured Upload Path</p>
                                                 <p className="text-sm font-semibold text-slate-800">
-                                                    {sheetInfo?.spreadsheetUrl ? 'Google Drive first, Firebase Storage fallback' : 'Firebase Storage fallback only'}
+                                                    {isLocalDemo ? 'Photos saved in this browser (up to 2 MB each)' : sheetInfo?.spreadsheetUrl ? 'Google Drive first, Firebase Storage fallback' : 'Firebase Storage fallback only'}
                                                 </p>
                                             </div>
                                             <div className="p-4 bg-[#F5F5F0] rounded-2xl">
@@ -3694,7 +3819,7 @@ export default function App() {
                                                     </div>
                                                 </div>
                                             ) : (
-                                                <p className="text-sm text-amber-700">{sheetInfoError || 'Sheets sync backend is not available yet.'}</p>
+                                                <p className="text-sm text-amber-700">{isLocalDemo ? 'Local demo data is saved automatically. Export a backup to keep a separate copy.' : sheetInfoError || 'Sheets sync backend is not available yet.'}</p>
                                             )}
                                         </div>
                                     </div>
@@ -3751,7 +3876,7 @@ export default function App() {
                                         </div>
 
                                         <p className="text-[10px] text-[#5A5A40]/40">
-                                            Update photos are saved by URL in the data exports. The image binary stays in Google Drive or Firebase Storage depending on the active upload route.
+                                            {isLocalDemo ? 'Local backups include photos as embedded data. Browser storage has a capacity limit; keep images small and export backups regularly.' : 'Update photos are saved by URL in the data exports. The image binary stays in Google Drive or Firebase Storage depending on the active upload route.'}
                                         </p>
                                     </div>
                                 </div>
@@ -3769,7 +3894,7 @@ export default function App() {
                                 </div>
 
                                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                                    {(['district_manager', 'area_manager', 'community_facilitator', 'operator', 'farm_mechanization'] as UserRole[]).map(role => (
+                                    {(['district_manager', 'area_manager', 'cf', 'jcf', 'state_manager'] as UserRole[]).map(role => (
                                         <div key={role} className="bg-white rounded-[32px] p-8 border border-black/5 shadow-sm">
                                             <h3 className="text-xl font-serif mb-6 capitalize">{role.replace(/_/g, ' ')}</h3>
                                             <div className="space-y-3">
@@ -3808,7 +3933,7 @@ export default function App() {
                                         <h2 className="text-3xl font-serif mb-2">User Management</h2>
                                         <p className="text-[#5A5A40]/60">
                                             {isAdmin || isFarmMech
-                                                ? 'Add users so they can receive machine transfers. They sign in with Google later.'
+                                                ? (isLocalDemo ? 'Add demo accounts, set their role and reporting manager, then choose them in the account switcher.' : 'Add users so they can receive machine transfers.')
                                                 : 'Manage the users inside your reporting branch, update their territory details, and keep the hierarchy current.'}
                                         </p>
                                     </div>
@@ -3817,7 +3942,7 @@ export default function App() {
                                             setShowAddUserForm(v => {
                                                 const next = !v;
                                                 if (next) {
-                                                    resetUserForm(manageableRoleOptions[0] || 'operator');
+                                                    resetUserForm(manageableRoleOptions[0] || 'jcf');
                                                 } else {
                                                     resetUserForm();
                                                 }
@@ -3845,7 +3970,7 @@ export default function App() {
                                                 />
                                             </div>
                                             <div>
-                                                <label className="text-[10px] font-bold uppercase tracking-widest text-[#5A5A40]/40 mb-1.5 block">Google Email *</label>
+                                                <label className="text-[10px] font-bold uppercase tracking-widest text-[#5A5A40]/40 mb-1.5 block">Email *</label>
                                                 <input
                                                     type="email"
                                                     placeholder="user@gmail.com"
@@ -3956,7 +4081,7 @@ export default function App() {
                                             </button>
                                         </div>
                                         <p className="text-[10px] text-[#5A5A40]/40 mt-4">
-                                            💡 The user will appear immediately as a recipient for machine transfers. When they sign in with Google using this email, their profile will be linked automatically.
+                                            {isLocalDemo ? 'The account is available immediately in the demo account switcher and transfer directory.' : 'The user will appear immediately as a recipient for machine transfers.'}
                                         </p>
                                     </div>
                                 )}
@@ -3971,25 +4096,19 @@ export default function App() {
                                             setAddUserForm({
                                                 displayName: u.displayName || '',
                                                 email: u.email || '',
-                                                role: u.role || 'operator',
+                                                role: u.role || 'jcf',
                                                 assignedState: u.assignedState || '',
                                                 assignedDistrict: u.assignedDistrict || '',
                                                 assignedMandal: u.assignedMandal || '',
                                                 assignedArea: u.assignedArea || '',
-                                                parentId: getSuggestedParentId(u.role || 'operator', u.uid, u.parentId || '')
+                                                parentId: getSuggestedParentId(u.role || 'jcf', u.uid, u.parentId || '')
                                             });
                                             setEditingUserId(u.uid);
                                             setAddUserError(null);
                                             setShowAddUserForm(true);
                                             window.scrollTo({ top: 0, behavior: 'smooth' });
                                         }}
-                                        onDelete={async (u) => {
-                                            if (!canManageUserRecord(u)) return;
-                                            if (confirm(`Are you sure you want to remove ${u.displayName} from the organization?`)) {
-                                                await deleteDoc(doc(db, 'users', u.uid));
-                                                void deleteSheetDocument('users', u.uid);
-                                            }
-                                        }}
+                                        onDelete={removeTeamMember}
                                     />
                                 </div>
                             </div>
@@ -4020,12 +4139,12 @@ export default function App() {
                                 setAddUserForm({
                                     displayName: u.displayName || '',
                                     email: u.email || '',
-                                    role: u.role || 'operator',
+                                    role: u.role || 'jcf',
                                     assignedState: u.assignedState || '',
                                     assignedDistrict: u.assignedDistrict || '',
                                     assignedMandal: u.assignedMandal || '',
                                     assignedArea: u.assignedArea || '',
-                                    parentId: getSuggestedParentId(u.role || 'operator', u.uid, u.parentId || '')
+                                    parentId: getSuggestedParentId(u.role || 'jcf', u.uid, u.parentId || '')
                                 });
                                 setEditingUserId(u.uid);
                                 setAddUserError(null);
@@ -4033,13 +4152,7 @@ export default function App() {
                                 setActiveTab('settings');
                                 window.scrollTo({ top: 0, behavior: 'smooth' });
                             }}
-                            onDelete={async (u) => {
-                                if (!canManageUserRecord(u)) return;
-                                if (confirm(`Are you sure you want to remove ${u.displayName} from the organization?`)) {
-                                    await deleteDoc(doc(db, 'users', u.uid));
-                                    void deleteSheetDocument('users', u.uid);
-                                }
-                            }}
+                            onDelete={removeTeamMember}
                             canManageUser={canManageUsers ? canManageUserRecord : () => false}
                         />
                     </div>
@@ -4304,12 +4417,7 @@ export default function App() {
                                     </span>
                                 </div>
                                 <div className="flex gap-3">
-                                    <button
-                                        onClick={() => setShowQRPrint(true)}
-                                        className="flex items-center gap-2 px-5 py-2 bg-white text-slate-700 hover:bg-slate-50 rounded-xl text-xs font-bold transition-colors border border-slate-200 shadow-sm"
-                                    >
-                                        <Printer className="w-4 h-4" /> Print QR Codes
-                                    </button>
+
                                     {hasPermission('initialize_fleet') && (
                                         <button
                                             onClick={() => setShowAddMachineModal(true)}
@@ -4437,7 +4545,7 @@ export default function App() {
                                                 <div className="grid grid-cols-2 gap-4 pt-4 border-t border-slate-100/80">
                                                     <div>
                                                         <p className="text-[9px] uppercase text-slate-400 font-bold tracking-widest mb-1">Reading</p>
-                                                        <p className="text-sm font-mono font-bold text-slate-700">{planter.lastReading.toLocaleString()}</p>
+                                                        <p className="text-sm font-mono font-bold text-slate-700">{(planter.lastReading ?? 0).toLocaleString()}</p>
                                                     </div>
                                                     <div>
                                                         <p className="text-[9px] uppercase text-slate-400 font-bold tracking-widest mb-1">Area</p>
@@ -4544,11 +4652,19 @@ export default function App() {
                 maintenanceRequests={maintenanceRequests}
                 maintenanceSchedules={maintenanceSchedules}
                 maintenanceLogs={maintenanceLogs}
-                canTransfer={Boolean(selectedPlanter && (selectedPlanter.currentHolderId === user.uid || hasPermission('assign_machines')))}
+                canTransfer={Boolean(selectedPlanter && hasPermission('assign_machines') && canManagePlanterMetadata(selectedPlanter))}
                 onTransferClick={() => setShowTransferModal(true)}
-                onUpdateReadingClick={selectedPlanter && (hasPermission('update_readings') || selectedPlanter.currentHolderId === user.uid) ? () => setActiveActionModal('update') : undefined}
+                onUpdateReadingClick={selectedPlanter && hasPermission('update_readings') ? () => setActiveActionModal('update') : undefined}
                 onRaiseMaintenanceClick={() => setActiveActionModal('request')}
                 onManageDetailsClick={selectedPlanter && canManagePlanterMetadata(selectedPlanter) ? () => setActiveActionModal('manage') : undefined}
+                extraActions={selectedPlanter && canManagePlanterMetadata(selectedPlanter) ? (
+                    <div className="my-5 flex flex-wrap gap-2 rounded-2xl bg-slate-50 p-3">
+                        <button className="rounded-xl bg-white border border-slate-200 px-3 py-2 text-xs font-semibold" onClick={() => setActiveActionModal('gallery')}>Upload photos</button>
+                        {(hasPermission('perform_maintenance') || selectedPlanter.currentHolderId === user.uid) && <button className="rounded-xl bg-white border border-slate-200 px-3 py-2 text-xs font-semibold" onClick={() => setActiveActionModal('service')}>Log service</button>}
+                        {(isAdmin || isFarmMech || isAreaManager || isDistrictManager) && <button className="rounded-xl bg-white border border-slate-200 px-3 py-2 text-xs font-semibold" onClick={() => setActiveActionModal('schedule')}>Schedule service</button>}
+                        {maintenanceRequests.some(request => request.planterId === selectedPlanter.id && request.status === 'completed' && !request.resolutionSubmittedAt) && <button className="rounded-xl bg-emerald-600 text-white px-3 py-2 text-xs font-semibold" onClick={() => setActiveActionModal('repair')}>Submit repair details</button>}
+                    </div>
+                ) : undefined}
             />
 
             {/* Action Dialogs for Machine Detail */}
@@ -4569,6 +4685,10 @@ export default function App() {
                                         {activeActionModal === 'update' && 'Submit Counter Reading'}
                                         {activeActionModal === 'request' && 'Raise Maintenance Request'}
                                         {activeActionModal === 'manage' && 'Machine Management'}
+                                        {activeActionModal === 'gallery' && 'Machine Photos'}
+                                        {activeActionModal === 'service' && 'Log Maintenance Service'}
+                                        {activeActionModal === 'repair' && 'Repair Completion'}
+                                        {activeActionModal === 'schedule' && 'Preventive Maintenance'}
                                     </h3>
                                     <p className="text-xs text-slate-400 mt-0.5 font-mono">{selectedPlanter.id}</p>
                                 </div>
@@ -4599,6 +4719,13 @@ export default function App() {
                                 />
                             )}
 
+                            {activeActionModal === 'gallery' && <GallerySection planter={selectedPlanter} onUpload={async url => { await updateDoc(doc(db, 'planters', selectedPlanter.id), { gallery: arrayUnion(url) }); }} />}
+                            {activeActionModal === 'service' && <MaintenanceLogForm planter={selectedPlanter} user={user} onSuccess={() => setActiveActionModal(null)} createNotification={createNotification} />}
+                            {activeActionModal === 'schedule' && <ScheduleForm planter={selectedPlanter} schedules={maintenanceSchedules.filter(schedule => schedule.planterId === selectedPlanter.id)} onSuccess={() => setActiveActionModal(null)} />}
+                            {activeActionModal === 'repair' && (() => {
+                                const request = maintenanceRequests.find(request => request.planterId === selectedPlanter.id && request.status === 'completed' && !request.resolutionSubmittedAt);
+                                return request ? <RepairCompletionForm planter={selectedPlanter} request={request} user={user} onSuccess={() => setActiveActionModal(null)} createNotification={createNotification} /> : <p>No repair details are pending.</p>;
+                            })()}
                             {activeActionModal === 'manage' && (
                                 <MachineDetailsForm
                                     planter={selectedPlanter}
@@ -4613,6 +4740,39 @@ export default function App() {
         </AppShell>
         </ToastProvider>
     );
+}
+
+function ScheduleForm({ planter, schedules, onSuccess }: { planter: Planter; schedules: PreventiveMaintenanceSchedule[]; onSuccess: () => void }) {
+    const [taskName, setTaskName] = useState('');
+    const [dueDate, setDueDate] = useState(() => format(new Date(Date.now() + 30 * 86400000), 'yyyy-MM-dd'));
+    const [frequency, setFrequency] = useState('90');
+    const [error, setError] = useState('');
+    const [saving, setSaving] = useState(false);
+    return <div className="space-y-5">
+        <form className="space-y-4" onSubmit={async event => {
+            event.preventDefault(); setSaving(true); setError('');
+            try {
+                if (!dueDate || !Number.isFinite(new Date(dueDate + 'T12:00:00').getTime())) throw new Error('Choose a valid due date.');
+                await addDoc(collection(db, 'maintenance_schedules'), { planterId: planter.id, taskName: taskName.trim(), frequencyDays: Number(frequency), nextDueDate: new Date(dueDate + 'T12:00:00').toISOString(), status: dueDate < new Date().toLocaleDateString('en-CA') ? 'overdue' : 'active' });
+                onSuccess();
+            } catch (err) { setError(err instanceof Error ? err.message : 'Could not save schedule.'); }
+            finally { setSaving(false); }
+        }}>
+            <label className="block text-sm font-semibold">Service task<input required value={taskName} onChange={event => setTaskName(event.target.value)} className="mt-1 w-full rounded-xl bg-slate-100 p-3" /></label>
+            <label className="block text-sm font-semibold">Due date<input required type="date" value={dueDate} onChange={event => setDueDate(event.target.value)} className="mt-1 w-full rounded-xl bg-slate-100 p-3" /></label>
+            <label className="block text-sm font-semibold">Repeat every (days)<input required min="1" type="number" value={frequency} onChange={event => setFrequency(event.target.value)} className="mt-1 w-full rounded-xl bg-slate-100 p-3" /></label>
+            {error && <p role="alert" className="text-rose-600">{error}</p>}
+            <button disabled={saving} className="rounded-xl bg-emerald-600 px-5 py-3 font-semibold text-white disabled:opacity-50">{saving ? 'Saving…' : 'Save schedule'}</button>
+        </form>
+        {schedules.map(schedule => <div key={schedule.id} className="flex items-center gap-3 border-t border-slate-100 pt-3 text-sm">
+            <div className="mr-auto"><p className="font-semibold">{schedule.taskName}</p><p className="text-slate-500">{schedule.status} · {schedule.nextDueDate ? format(new Date(schedule.nextDueDate), 'MMM d, yyyy') : 'No due date'}</p></div>
+            <button className="text-emerald-700 font-semibold" onClick={async () => {
+                const next = new Date(); next.setDate(next.getDate() + (schedule.frequencyDays || 90));
+                await updateDoc(doc(db, 'maintenance_schedules', schedule.id!), { lastCompletedDate: new Date().toISOString(), lastCompletedReading: planter.lastReading, nextDueDate: next.toISOString(), status: 'active' });
+            }}>Mark serviced</button>
+            <button className="text-rose-600" onClick={() => void deleteDoc(doc(db, 'maintenance_schedules', schedule.id!))}>Remove</button>
+        </div>)}
+    </div>;
 }
 
 function MachineDetailsForm({ planter, onSuccess, createNotification }: { planter: Planter, onSuccess: () => void, createNotification: (n: any) => Promise<void> }) {
@@ -4944,6 +5104,7 @@ function MaintenanceLogForm({ planter, user, onSuccess, createNotification }: { 
         setIsSubmitting(true);
         try {
             const log: MaintenanceLog = {
+                workflowVersion: 2,
                 planterId: planter.id,
                 technicianName,
                 notes,
@@ -5045,6 +5206,7 @@ function MaintenanceRequestForm({ planter, user, holderName, onSuccess, createNo
 
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
+        if (isLocalDemo) { window.location.href = `/?page=maintenance&machine=${encodeURIComponent(planter.id)}`; return; }
         if (!description) return;
 
         setIsSubmitting(true);
@@ -5178,6 +5340,7 @@ function RepairCompletionForm({
         setIsSubmitting(true);
         try {
             const log: MaintenanceLog = {
+                workflowVersion: 2,
                 planterId: planter.id,
                 requestId: request.id,
                 technicianName: technicianName.trim(),
@@ -5214,7 +5377,7 @@ function RepairCompletionForm({
             void syncFirestoreDocument('planters', planter.id);
 
             await createNotification({
-                targetRole: 'farm_mechanization',
+                targetRole: 'state_manager',
                 title: 'Repair Details Submitted',
                 message: `${planter.id} repair completion details were submitted by ${user.displayName || user.email}.`,
                 type: 'success',
@@ -5302,19 +5465,22 @@ function RepairCompletionForm({
 
 function GallerySection({ planter, onUpload }: { planter: Planter, onUpload: (url: string) => Promise<void> }) {
     const [isUploading, setIsUploading] = useState(false);
+    const [uploadError, setUploadError] = useState('');
 
     const handleUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
         const file = e.target.files?.[0];
         if (!file) return;
 
         setIsUploading(true);
+        setUploadError('');
         let url: string | undefined;
         try {
             // Priority 1: Cloudinary
             const cloudName = (import.meta as any).env.VITE_CLOUDINARY_CLOUD_NAME;
             const uploadPreset = (import.meta as any).env.VITE_CLOUDINARY_UPLOAD_PRESET;
 
-            if (cloudName && uploadPreset) {
+            if (isLocalDemo) url = await readLocalFile(file);
+            if (!isLocalDemo && cloudName && uploadPreset) {
                 const formData = new FormData();
                 formData.append('file', file);
                 formData.append('upload_preset', uploadPreset);
@@ -5354,6 +5520,7 @@ function GallerySection({ planter, onUpload }: { planter: Planter, onUpload: (ur
             await onUpload(url);
         } catch (err) {
             console.error('Gallery upload failed:', err);
+            setUploadError(err instanceof Error ? err.message : 'Could not upload photo.');
         } finally {
             setIsUploading(false);
         }
@@ -5361,6 +5528,7 @@ function GallerySection({ planter, onUpload }: { planter: Planter, onUpload: (ur
 
     return (
         <div className="space-y-4">
+            {uploadError && <p role="alert" className="text-sm text-rose-600">{uploadError}</p>}
             <div className="grid grid-cols-3 gap-3">
                 {planter.gallery?.map((url, idx) => (
                     <div key={idx} className="aspect-square rounded-2xl overflow-hidden border border-black/5 group relative">
@@ -5399,7 +5567,7 @@ function UpdateForm({ planter, user, machineConfig, onSuccess }: {
 }) {
     const [newReading, setNewReading] = useState('');
     const [fuelConsumed, setFuelConsumed] = useState('');
-    const [operatorName, setOperatorName] = useState('');
+    const [jcfName, setOperatorName] = useState('');
     const [weatherNotes, setWeatherNotes] = useState('');
     const [image, setImage] = useState<File | null>(null);
     const [preview, setPreview] = useState<string | null>(null);
@@ -5441,7 +5609,8 @@ function UpdateForm({ planter, user, machineConfig, onSuccess }: {
                     const cloudName = (import.meta as any).env.VITE_CLOUDINARY_CLOUD_NAME;
                     const uploadPreset = (import.meta as any).env.VITE_CLOUDINARY_UPLOAD_PRESET;
 
-                    if (cloudName && uploadPreset) {
+                    if (isLocalDemo) imageUrl = await readLocalFile(image);
+                    if (!isLocalDemo && cloudName && uploadPreset) {
                         const formData = new FormData();
                         formData.append('file', image);
                         formData.append('upload_preset', uploadPreset);
@@ -5476,6 +5645,7 @@ function UpdateForm({ planter, user, machineConfig, onSuccess }: {
                         }
                     }
                 } catch (uploadErr) {
+                    if (isLocalDemo) throw uploadErr;
                     console.warn('Image upload failed, saving without image:', uploadErr);
                 }
             }
@@ -5488,7 +5658,7 @@ function UpdateForm({ planter, user, machineConfig, onSuccess }: {
                 distanceKm: Number(distance) || 0,
                 areaAcres: Number(area) || 0,
                 fuelConsumed: Number(fuelConsumed) || 0,
-                operatorName: operatorName,
+                jcfName: jcfName,
                 weatherNotes: weatherNotes,
                 imageUrl: imageUrl || '',
                 timestamp: new Date().toISOString(),
@@ -5510,7 +5680,7 @@ function UpdateForm({ planter, user, machineConfig, onSuccess }: {
         } catch (err) {
 
             console.error(err);
-            setError('Failed to save update. Please try again.');
+            setError(err instanceof Error ? err.message : 'Failed to save update. Please try again.');
         } finally {
             setIsSubmitting(false);
         }
@@ -5521,7 +5691,7 @@ function UpdateForm({ planter, user, machineConfig, onSuccess }: {
             <div className="grid grid-cols-2 gap-4">
                 <div className="p-4 bg-[#F5F5F0] rounded-2xl">
                     <p className="text-[10px] uppercase text-[#5A5A40]/40 font-bold mb-1">Previous</p>
-                    <p className="text-xl font-mono font-bold">{planter.lastReading.toLocaleString()}</p>
+                    <p className="text-xl font-mono font-bold">{(planter.lastReading ?? 0).toLocaleString()}</p>
                 </div>
                 <div className="p-4 bg-[#5A5A40]/5 rounded-2xl border border-[#5A5A40]/10">
                     <p className="text-[10px] uppercase text-[#5A5A40]/40 font-bold mb-1">New Reading</p>
@@ -5572,7 +5742,7 @@ function UpdateForm({ planter, user, machineConfig, onSuccess }: {
                     <p className="text-[10px] uppercase text-[#5A5A40]/40 font-bold mb-1">Operator Name</p>
                     <input
                         type="text"
-                        value={operatorName}
+                        value={jcfName}
                         onChange={(e) => setOperatorName(e.target.value)}
                         placeholder="e.g. John Doe"
                         className="w-full bg-transparent border-none p-0 text-lg font-bold focus:ring-0 placeholder:text-[#5A5A40]/20"

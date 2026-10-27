@@ -1,0 +1,12 @@
+import assert from 'node:assert/strict';
+import { build } from 'esbuild';
+const bundled=await build({entryPoints:['src/lib/seasonScanContext.ts'],bundle:true,write:false,format:'esm',platform:'node'});
+const api=await import(`data:text/javascript;base64,${Buffer.from(bundled.outputFiles[0].text).toString('base64')}`);
+const records=new Map(),storage={getItem:key=>records.get(key)||null,setItem:(key,value)=>records.set(key,value),removeItem:key=>records.delete(key)};
+assert.deepEqual(api.readSeasonScanContext(storage,'cf'),{scheduleId:'',phase:'pre'});
+api.rememberSeasonScanContext(storage,'cf',{scheduleId:'season-1',phase:'post'});
+assert.deepEqual(api.readSeasonScanContext(storage,'cf'),{scheduleId:'season-1',phase:'post'},'Season and post phase survive scanner navigation/reload');
+assert.deepEqual(api.readSeasonScanContext(storage,'other-cf'),{scheduleId:'',phase:'pre'},'Scan context cannot leak across switched accounts');
+records.set(api.SEASON_SCAN_KEY,'bad-json');assert.deepEqual(api.readSeasonScanContext(storage,'cf'),{scheduleId:'',phase:'pre'});
+api.rememberSeasonScanContext(storage,'cf',{scheduleId:'season-1',phase:'pre'});api.clearSeasonScanContext(storage);assert.equal(records.size,0);
+console.log('Scan-first visit context passed: scanner reload continuity, pre/post phase, account isolation, malformed data and sign-out clearing. Seasonal service tests separately reject a mismatched QR.');

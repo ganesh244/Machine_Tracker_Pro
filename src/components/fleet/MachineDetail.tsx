@@ -30,7 +30,7 @@ import { StatusBadge, RoleBadge } from '../ui/Badge';
 import { EmptyState } from '../ui/EmptyState';
 import { MachineQRCode } from './MachineQRCode';
 import { db } from '../../firebase';
-import { collection, getDocs, query, orderBy } from 'firebase/firestore';
+import { collection, getDocs, query, orderBy } from '../../lib/data';
 
 interface MachineDetailProps {
   planter: Planter | null;
@@ -49,6 +49,7 @@ interface MachineDetailProps {
   onUpdateReadingClick?: () => void;
   onRaiseMaintenanceClick?: () => void;
   onManageDetailsClick?: () => void;
+  extraActions?: React.ReactNode;
 }
 
 type TabType = 'overview' | 'activity' | 'maintenance' | 'gallery';
@@ -70,6 +71,7 @@ export const MachineDetail = ({
   onUpdateReadingClick,
   onRaiseMaintenanceClick,
   onManageDetailsClick,
+  extraActions,
 }: MachineDetailProps) => {
   const [activeTab, setActiveTab] = useState<TabType>('overview');
   const [lightboxImage, setLightboxImage] = useState<string | null>(null);
@@ -202,8 +204,8 @@ export const MachineDetail = ({
     if (!planter || !updates) return [];
     const farmers = new Set<string>();
     updates.forEach(u => {
-      if (u.planterId === planter.id && u.operatorName) {
-        farmers.add(u.operatorName);
+      if (u.planterId === planter.id && u.farmerName) {
+        farmers.add(u.farmerName);
       }
     });
     return Array.from(farmers);
@@ -780,6 +782,7 @@ export const MachineDetail = ({
                   </div>
                 )}
 
+                {extraActions}
                 {/* 3. MAINTENANCE TAB */}
                 {activeTab === 'maintenance' && (
                   <div className="space-y-6">

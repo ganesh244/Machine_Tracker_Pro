@@ -1,12 +1,12 @@
 import React from 'react';
 import {
   LayoutDashboard, Tractor, ArrowLeftRight, MapPin, BarChart3,
-  Network, MessageSquare, Settings, ChevronRight, Leaf
+  Network, MessageSquare, Settings, ChevronRight, Leaf, QrCode
 } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import { UserRole } from '../../types';
 
-type TabId = 'dashboard' | 'fleet' | 'reports' | 'map' | 'assignments' | 'settings' | 'hierarchy' | 'messages' | 'updates' | 'analytics';
+type TabId = 'dashboard' | 'fleet' | 'qr_management' | 'reports' | 'map' | 'assignments' | 'settings' | 'hierarchy' | 'messages' | 'updates' | 'analytics';
 
 interface NavItem {
   id: TabId;
@@ -19,6 +19,7 @@ interface NavItem {
 const NAV_ITEMS: NavItem[] = [
   { id: 'dashboard',   label: 'Dashboard',   icon: LayoutDashboard },
   { id: 'fleet',       label: 'Fleet',       icon: Tractor },
+  { id: 'qr_management', label: 'QR & Scanner', icon: QrCode },
   { id: 'assignments', label: 'Assignments', icon: ArrowLeftRight },
   { id: 'map',         label: 'Map',         icon: MapPin },
   { id: 'reports',     label: 'Reports',     icon: BarChart3 },

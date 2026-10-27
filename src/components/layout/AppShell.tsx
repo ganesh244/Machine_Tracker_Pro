@@ -4,7 +4,7 @@ import { TopBar } from './TopBar';
 import { MobileNav } from './MobileNav';
 import { AppNotification, UserProfile, UserRole } from '../../types';
 
-type TabId = 'dashboard' | 'fleet' | 'reports' | 'map' | 'assignments' | 'settings' | 'hierarchy' | 'messages' | 'updates' | 'analytics';
+type TabId = 'dashboard' | 'fleet' | 'qr_management' | 'reports' | 'map' | 'assignments' | 'settings' | 'hierarchy' | 'messages' | 'updates' | 'analytics';
 
 interface AppShellProps {
   children: React.ReactNode;
@@ -18,7 +18,7 @@ interface AppShellProps {
   onMarkAllRead: () => void;
   onNotificationClick: (n: AppNotification) => void;
   onLogout: () => void;
-  onRoleChange?: (role: UserRole) => void;
+
   isAdmin: boolean;
   pendingAssignments: number;
   unreadMessages: number;
@@ -40,7 +40,7 @@ export const AppShell = ({
   onMarkAllRead,
   onNotificationClick,
   onLogout,
-  onRoleChange,
+
   isAdmin,
   pendingAssignments,
   unreadMessages,
@@ -84,7 +84,7 @@ export const AppShell = ({
           onMarkAllRead={onMarkAllRead}
           onNotificationClick={onNotificationClick}
           onLogout={onLogout}
-          onRoleChange={onRoleChange}
+
           isAdmin={isAdmin}
         />
 

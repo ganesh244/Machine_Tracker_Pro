@@ -11,3 +11,8 @@ service-account*.json
 *.local
 .vscode/
 .idea/
+
+.vercel/
+functions/lib/
+output/
+tmp/

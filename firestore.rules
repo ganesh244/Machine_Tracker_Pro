@@ -2,51 +2,113 @@ rules_version = '2';
 
 service cloud.firestore {
   match /databases/{database}/documents {
-    // Important:
-    // This app currently uses a custom email/localStorage login flow instead of Firebase Auth.
-    // That means Firestore cannot identify the real user in security rules yet.
-    // These rules add guardrails by limiting access to known collections, but they are not
-    // true identity-based security. For full production security, migrate the app to Firebase Auth
-    // or move Firestore writes behind a trusted backend.
+    
+    function isAuthenticated() {
+      return request.auth != null;
+    }
 
+    function hasValidProfile() {
+      return isAuthenticated() && exists(/databases/$(database)/documents/users/$(request.auth.uid));
+    }
+    
+    function getRole() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role;
+    }
+    
+    function isAdmin() {
+      return getRole() == 'admin';
+    }
+
+    function isDistrictManager() {
+      return getRole() == 'district_manager';
+    }
+
+    function isManager() {
+      return getRole() in ['admin', 'district_manager', 'area_manager'];
+    }
+
+    // USERS: Users can read their own profile. Valid users can read all profiles.
     match /users/{userId} {
-      allow read, write: if true;
+      allow read: if (isAuthenticated() && request.auth.uid == userId) || hasValidProfile();
+      allow create, update, delete: if hasValidProfile() && isAdmin();
     }
 
+    // PUBLIC PROFILES: Read-only for everyone (used for dropdowns). Admin can write.
+    match /publicProfiles/{userId} {
+      allow read: if true;
+      allow create, update, delete: if hasValidProfile() && isAdmin();
+    }
+
+    // PLANTERS: Public can read and perform narrow creates/updates (onboarding/handover). Managers can create fully.
     match /planters/{planterId} {
-      allow read, write: if true;
+      allow read: if true; // Public access for scan route
+      allow create: if (hasValidProfile() && isManager()) || (
+        request.resource.data.keys().hasOnly(['id', 'machineType', 'status', 'cfJf', 'initialOperator', 'currentCustodian', 'registrationDate', 'location', 'lastReading', 'lastUpdated', 'currentHolderId', 'currentHolderRole'])
+        && request.resource.data.status == 'registered_unused'
+      );
+      allow update: if hasValidProfile() || (
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'currentCustodian', 'cfJf', 'location', 'lastUpdated'])
+        && request.resource.data.status in ['registered_unused', 'in_use']
+      );
+      allow delete: if hasValidProfile() && isAdmin();
+      
+      match /usageLogs/{logId} {
+        allow read: if true; // Public access to find the last log to close it
+        allow create: if hasValidProfile() || (
+          request.resource.data.keys().hasOnly(['type', 'timestamp', 'farmerName', 'initialOperator', 'cfJf', 'handoverTo', 'location', 'imageUrl', 'cropType', 'acresCovered', 'fuelConsumed', 'weatherNotes', 'usageStartDate', 'handoverFrom'])
+          && request.resource.data.type in ['onboarding', 'handover']
+        );
+        allow update: if hasValidProfile() || (
+          request.resource.data.diff(resource.data).affectedKeys().hasOnly(['usageEndDate'])
+        );
+        allow delete: if hasValidProfile() && isAdmin();
+      }
     }
 
-    match /updates/{updateId} {
-      allow read, write: if true;
+    // ROLE PERMISSIONS: Only Admin or District Manager can modify roles
+    match /role_permissions/{roleId} {
+      allow read: if hasValidProfile();
+      allow write: if hasValidProfile() && (isAdmin() || isDistrictManager());
     }
 
+    // MAINTENANCE: Field roles can create/update. Only Admin can delete.
     match /maintenance_requests/{requestId} {
-      allow read, write: if true;
+      allow read: if hasValidProfile();
+      allow create, update: if hasValidProfile();
+      allow delete: if hasValidProfile() && isAdmin();
     }
 
     match /maintenance_logs/{logId} {
-      allow read, write: if true;
+      allow read: if hasValidProfile();
+      allow create, update: if hasValidProfile();
+      allow delete: if hasValidProfile() && isAdmin();
+    }
+
+    // UPDATES & ASSIGNMENTS: All authenticated users can create/read.
+    match /updates/{updateId} {
+      allow read, create, update: if hasValidProfile();
+      allow delete: if hasValidProfile() && isAdmin();
     }
 
     match /assignments/{assignmentId} {
-      allow read, write: if true;
+      allow read, create, update: if hasValidProfile();
+      allow delete: if hasValidProfile() && isAdmin();
     }
 
+    // NOTIFICATIONS: Users can only read/write their own notifications.
     match /notifications/{notificationId} {
-      allow read, write: if true;
+      allow read, update, delete: if hasValidProfile() && resource.data.userId == request.auth.uid;
+      allow create: if hasValidProfile();
     }
 
     match /messages/{messageId} {
-      allow read, write: if true;
-    }
-
-    match /role_permissions/{roleId} {
-      allow read, write: if true;
+      allow read, create: if hasValidProfile();
+      allow update, delete: if hasValidProfile() && resource.data.senderId == request.auth.uid;
     }
 
     match /settings/{settingId} {
-      allow read, write: if true;
+      allow read: if hasValidProfile();
+      allow write: if hasValidProfile() && isAdmin();
     }
 
     match /{document=**} {

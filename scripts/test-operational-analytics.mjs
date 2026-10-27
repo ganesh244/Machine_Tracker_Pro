@@ -1,0 +1,44 @@
+import assert from 'node:assert/strict';
+import { build } from 'esbuild';
+
+const values = new Map();
+globalThis.localStorage = { getItem: key => values.get(key) ?? null, setItem: (key, value) => values.set(key, value) };
+globalThis.window = new EventTarget();
+window.location = { origin: 'http://localhost:3001' };
+const bundled = await build({ stdin: { contents: "export * from './src/lib/demoScenarios'; export * from './src/lib/operationalAnalytics'; export * from './src/lib/fieldOperations'; export * as data from './src/lib/data'; export { demoUsers } from './src/lib/demo';", resolveDir: process.cwd(), loader: 'ts' }, bundle: true, write: false, format: 'esm', platform: 'browser', define: { 'import.meta.env': JSON.stringify({ DEV: true, VITE_LOCAL_DEMO: 'true' }) } });
+const { data, demoUsers, ...workflow } = await import(`data:text/javascript;base64,${Buffer.from(bundled.outputFiles[0].text).toString('base64')}`);
+await workflow.ensureDemoScenarios();
+const read=async name=>(await data.getDocs(data.collection({},name))).docs.map(d=>d.data());
+const machines=(await read('planters')).filter(d=>d.qrLabelId), usage=await read('field_usage'),farmers=await read('farmers'),requests=await read('maintenance_requests'),labels=await read('qr_labels');
+for(const actor of demoUsers){
+ const r=workflow.buildOperationalAnalytics(actor,demoUsers,machines,usage,farmers,requests,labels);
+ assert.equal(r.attention.length,12);
+ assert.equal(r.months.length,6);assert.equal(r.weeks.length,8);
+ assert.equal(r.delays.length,6);assert.equal(r.costs.length,1);assert.equal(r.repairCost,2200);
+ assert.equal(r.cropTypes.reduce((n,row)=>n+row.acres,0),45);
+ assert.equal(r.rollout.used,5);assert.equal(r.rollout.withFarmer,11);
+ assert.equal(r.quality.length,0);
+ assert.equal(r.villages[0].machines,12);
+}
+const outsider={uid:'outsider',role:'state_manager',displayName:'Outside'};
+const empty=workflow.buildOperationalAnalytics(outsider,[...demoUsers,outsider],machines,usage,farmers,requests,labels);
+assert.equal(empty.attention.length,0);assert.equal(empty.repairCost,0);assert.equal(empty.cropTypes.length,0);assert.equal(empty.rollout.labels,0);
+const fixed=new Date('2026-10-27T12:00:00Z');
+const m={...machines[0],id:'test-m',leadFarmerId:'test-f',registrationDate:'2026-09-01T00:00:00Z',status:'idle',operatingStatus:'idle'};
+const u={...usage[0],id:'test-u',machineId:m.id,operationDate:'2026-10-01',landAcres:5,photos:[],lat:999,crop:''};
+const req={...requests.find(r=>r.workflowVersion===2),id:'test-r',planterId:m.id,status:'pending_state_manager',timestamp:'2026-10-05T12:00:00Z',history:[{at:'2026-10-10T12:00:00Z'}],machineStopped:true};
+const done={...req,id:'done',status:'completed',completedAt:'2026-10-20T12:00:00Z',actualCost:1000};
+const r=workflow.buildOperationalAnalytics(demoUsers[0],demoUsers,[m],[u],[],[req,done],[], '2026-10-01','2026-10-31','district',fixed);
+assert.ok(r.attention[0].issues.includes('No usage in 14+ days'));
+assert.equal(r.attention[0].quietDays,26);
+assert.equal(r.delays[0].waitingDays,17);
+assert.equal(r.repairCost,1000);assert.equal(r.costs[0].costPerAcre,200);
+assert.equal(r.quality[0].issues.length,3);
+assert.equal(r.downtime.find(row=>row.status==='Repair completed').days,15);
+assert.equal(r.months.at(-1).acres,5);
+assert.equal(r.places[0].acresPerMachine,5);
+const filtered=workflow.buildOperationalAnalytics(demoUsers[0],demoUsers,[m],[u],[],[req,done],[],'2026-10-21','2026-10-27','district',fixed);
+assert.equal(filtered.repairCost,0);assert.equal(filtered.cropTypes.length,0);assert.equal(filtered.attention.length,1,'current attention independent of dates');
+assert.equal(filtered.villages[0].visits,0);
+assert.ok(r.team.some(row=>row.id==='demo-cf'));
+console.log('Operational analytics passed: all roles, scope isolation, monthly/weekly periods, attention and last use, stage age, costs, reported downtime, team activity, village gaps, crop/type totals, QR rollout and quality checks.');

@@ -7,12 +7,13 @@ import { AppNotification, UserProfile, UserRole } from '../../types';
 import { RoleBadge } from '../ui/Badge';
 
 const ROLE_LABEL: Record<UserRole, string> = {
+  farm_mechanization: 'Farm Mechanization Team',
   admin:                 'Admin',
-  farm_mechanization:    'Farm Mech',
+  state_manager:    'State Manager',
   district_manager:      'District Manager',
   area_manager:          'Area Manager',
-  community_facilitator: 'Facilitator',
-  operator:              'Operator',
+  cf: 'CF',
+  jcf:              'JCF',
 };
 
 interface TopBarProps {
@@ -24,7 +25,7 @@ interface TopBarProps {
   onMarkAllRead: () => void;
   onNotificationClick: (n: AppNotification) => void;
   onLogout: () => void;
-  onRoleChange?: (role: UserRole) => void;
+
   isAdmin: boolean;
 }
 
@@ -37,7 +38,7 @@ export const TopBar = ({
   onMarkAllRead,
   onNotificationClick,
   onLogout,
-  onRoleChange,
+
   isAdmin,
 }: TopBarProps) => {
   const unreadCount = notifications.filter(n => !n.read).length;
@@ -55,21 +56,7 @@ export const TopBar = ({
 
         {/* Right controls */}
         <div className="flex items-center gap-2 ml-auto">
-          {/* Role switcher — dev only */}
-          {onRoleChange && (
-            <div className="hidden md:flex items-center bg-slate-100 rounded-xl px-3 py-1.5 gap-2">
-              <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Role:</span>
-              <select
-                value={userProfile?.role || 'admin'}
-                onChange={e => onRoleChange(e.target.value as UserRole)}
-                className="bg-transparent border-none text-[11px] font-bold text-slate-600 focus:ring-0 cursor-pointer py-0"
-              >
-                {(['admin','farm_mechanization','district_manager','area_manager','community_facilitator','operator'] as UserRole[]).map(r => (
-                  <option key={r} value={r}>{ROLE_LABEL[r]}</option>
-                ))}
-              </select>
-            </div>
-          )}
+
 
           {/* Notifications */}
           <div className="relative">

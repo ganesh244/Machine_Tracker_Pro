@@ -2,6 +2,7 @@ import { initializeApp } from 'firebase/app';
 import { getFirestore, connectFirestoreEmulator } from 'firebase/firestore';
 import { getAuth, connectAuthEmulator } from 'firebase/auth';
 import { getStorage } from 'firebase/storage';
+import { getFunctions, connectFunctionsEmulator } from 'firebase/functions';
 import defaultAppletConfig from '../firebase-applet-config.json';
 
 // Use environment variables or fallback to applet configuration
@@ -21,6 +22,7 @@ const firestoreDatabaseId = (env.VITE_FIREBASE_DATABASE_ID || defaultAppletConfi
 export const db = firestoreDatabaseId ? getFirestore(app, firestoreDatabaseId) : getFirestore(app);
 export const auth = getAuth(app);
 export const storage = getStorage(app);
+export const functions = getFunctions(app);
 
 // Only connect to local emulator if explicitly enabled
 const useEmulator = env.VITE_USE_FIREBASE_EMULATOR === 'true';
@@ -29,6 +31,7 @@ if (useEmulator) {
   try {
     connectFirestoreEmulator(db, 'localhost', 8080);
     connectAuthEmulator(auth, 'http://localhost:9099');
+    connectFunctionsEmulator(functions, 'localhost', 5001);
   } catch (e) {
     console.warn('Could not connect to Firebase emulator:', e);
   }

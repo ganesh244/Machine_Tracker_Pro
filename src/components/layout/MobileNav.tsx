@@ -2,7 +2,7 @@ import React from 'react';
 import { LayoutDashboard, Tractor, ArrowLeftRight, MapPin, MoreHorizontal } from 'lucide-react';
 import { cn } from '../../lib/utils';
 
-type TabId = 'dashboard' | 'fleet' | 'reports' | 'map' | 'assignments' | 'settings' | 'hierarchy' | 'messages' | 'updates' | 'analytics';
+type TabId = 'dashboard' | 'fleet' | 'qr_management' | 'reports' | 'map' | 'assignments' | 'settings' | 'hierarchy' | 'messages' | 'updates' | 'analytics';
 
 interface MobileNavProps {
   activeTab: TabId;

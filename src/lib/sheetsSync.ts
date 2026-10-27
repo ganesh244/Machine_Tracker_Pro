@@ -1,3 +1,4 @@
+import { isLocalDemo, readLocalFile } from './demo';
 let sheetsSyncUnavailableUntil = 0;
 let hasWarnedSheetsSyncOffline = false;
 
@@ -30,6 +31,7 @@ const markSheetsSyncAvailable = () => {
 };
 
 const postToSheets = async (path: string, payload: Record<string, unknown>) => {
+  if (isLocalDemo) return;
   const baseUrl = getSheetsSyncBaseUrl();
   if (!baseUrl) return;
 
@@ -57,6 +59,7 @@ export const deleteSheetDocument = async (collection: string, documentId: string
 };
 
 export const getSheetInfo = async (): Promise<any> => {
+  if (isLocalDemo) return { ok: true, mode: 'local', message: 'Saved in this browser; cloud mirroring is disabled.' };
   const baseUrl = getSheetsSyncBaseUrl();
   console.log('getSheetInfo: fetching from', `${baseUrl}/api/sheets/info`);
 
@@ -87,6 +90,7 @@ export const uploadDriveFile = async ({
   machineId?: string;
   bucket: 'gallery' | 'proofs';
 }) => {
+  if (isLocalDemo) return { url: await readLocalFile(file) };
   const baseUrl = getSheetsSyncBaseUrl();
   if (!baseUrl) return null;
 

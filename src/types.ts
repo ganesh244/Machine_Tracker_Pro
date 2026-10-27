@@ -1,4 +1,4 @@
-export type UserRole = 'admin' | 'district_manager' | 'area_manager' | 'community_facilitator' | 'operator' | 'farm_mechanization';
+export type UserRole = 'admin' | 'district_manager' | 'area_manager' | 'cf' | 'jcf' | 'state_manager' | 'farm_mechanization';
 
 export type Permission = 
   | 'assign_machines' 
@@ -107,13 +107,13 @@ export interface Message {
 export interface ReadingUpdate {
   id?: string;
   planterId: string;
-  type: 'reading' | 'handover';
+  type: 'reading' | 'handover' | 'onboarding';
   previousReading: number;
   newReading: number;
   distanceKm: number;
   areaAcres: number;
   fuelConsumed?: number;
-  operatorName?: string;
+  jcfName?: string;
   weatherNotes?: string;
   imageUrl: string;
   timestamp: string;
@@ -130,6 +130,7 @@ export interface ReadingUpdate {
 }
 
 export interface MaintenanceLog {
+  workflowVersion?: 2;
   id?: string;
   planterId: string;
   requestId?: string;
@@ -140,8 +141,9 @@ export interface MaintenanceLog {
   cost?: number;
   createdByUid?: string;
   createdByName?: string;
-  approvalStatus: 'pending_area_manager' | 'pending_district_manager' | 'pending_farm_mech' | 'approved' | 'rejected';
+  approvalStatus: 'pending_area_manager' | 'pending_district_manager' | 'pending_state_manager' | 'pending_farm_mech' | 'approved' | 'rejected';
   approvals?: {
+    stateManager?: { approved: boolean; by: string; at: string };
     areaManager?: { approved: boolean; by: string; at: string };
     districtManager?: { approved: boolean; by: string; at: string };
     farmMechManager?: { approved: boolean; by: string; at: string };
@@ -161,6 +163,7 @@ export interface PreventiveMaintenanceSchedule {
   status: 'active' | 'overdue' | 'completed';
 }
 export interface MaintenanceRequest {
+  workflowVersion?: 2;
   id?: string;
   planterId: string;
   requestType: 'repair' | 'regular_service';
@@ -175,6 +178,7 @@ export interface MaintenanceRequest {
   status:
     | 'pending_area_manager'
     | 'pending_district_manager'
+    | 'pending_state_manager'
     | 'pending_farm_mech'
     | 'pending_admin'
     | 'approved'
@@ -183,6 +187,7 @@ export interface MaintenanceRequest {
     | 'rejected'
     | 'cancelled';
   approvals?: {
+    stateManager?: { approved: boolean; by: string; at: string };
     areaManager?: { approved: boolean; by: string; at: string };
     districtManager?: { approved: boolean; by: string; at: string };
     farmMechManager?: { approved: boolean; by: string; at: string };
