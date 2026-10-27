@@ -1,3 +1,4 @@
+import { StateDistrictFields } from './StateDistrictFields';
 import React, { useState } from 'react';
 import { Camera, MapPin, Plus, Trash2, Loader2 } from 'lucide-react';
 import { isLocalDemo } from '../../lib/demo';
@@ -52,7 +53,7 @@ export function LocationFields({ initial }: { initial?: Partial<FieldLocation> }
   const [lng, setLng] = useState(initial?.lng === undefined ? '' : String(initial.lng));
   const [busy, setBusy] = useState(false), [error, setError] = useState('');
   return <fieldset className="fo-form-section"><legend>Village & location</legend>
-    <div className="fo-form-grid"><Field label="State *"><input name="state" required defaultValue={initial?.state || 'Telangana'} /></Field><Field label="District *"><input name="district" required defaultValue={initial?.district || ''} /></Field><Field label="Mandal *"><input name="mandal" required defaultValue={initial?.mandal || ''} /></Field><Field label="Village *"><input name="village" required defaultValue={initial?.village || ''} /></Field></div>
+    <div className="fo-form-grid"><StateDistrictFields initialState={initial?.state||'Telangana'} initialDistrict={initial?.district||''}/><Field label="Mandal *"><input name="mandal" required defaultValue={initial?.mandal || ''} /></Field><Field label="Village *"><input name="village" required defaultValue={initial?.village || ''} /></Field></div>
     <div className="fo-gps-heading"><div><strong>GPS coordinates</strong><small>Capture the location in the field, or enter it manually.</small></div><button type="button" className="fo-button secondary small" disabled={busy} onClick={() => {
       setBusy(true); setError('');
       if (!navigator.geolocation) { setError('GPS is unavailable. Enter the coordinates manually.'); setBusy(false); return; }

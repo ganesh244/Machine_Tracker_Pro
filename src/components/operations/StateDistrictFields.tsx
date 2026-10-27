@@ -1,0 +1,7 @@
+import React,{useState} from 'react';
+import {stateOptions,districtOptions} from '../../lib/locations';
+export function StateDistrictFields({initialState='',initialDistrict='',stateName='state',districtName='district',stateLabel='State',districtLabel='District',stateRequired=true,districtRequired=true}:{initialState?:string;initialDistrict?:string;stateName?:string;districtName?:string;stateLabel?:string;districtLabel?:string;stateRequired?:boolean;districtRequired?:boolean}){
+ const [state,setState]=useState(initialState),[district,setDistrict]=useState(initialDistrict);
+ const districts=districtOptions(state,state===initialState?[initialDistrict]:[]);
+ return <><label className="fo-field"><span>{stateLabel}{stateRequired?' *':''}</span><select aria-label={stateLabel} name={stateName} required={stateRequired} value={state} onChange={event=>{setState(event.target.value);setDistrict('');}}><option value="">Choose state</option>{stateOptions([initialState]).map(value=><option key={value} value={value}>{value==='Andhra Pradesh'?'Andhra Pradesh (AP)':value}</option>)}</select></label><label className="fo-field"><span>{districtLabel}{districtRequired?' *':''}</span><select aria-label={districtLabel} name={districtName} required={districtRequired} disabled={!state} value={district} onChange={event=>setDistrict(event.target.value)}><option value="">{state?'Choose district':'Choose state first'}</option>{districts.map(value=><option key={value} value={value}>{value}</option>)}</select></label></>;
+}

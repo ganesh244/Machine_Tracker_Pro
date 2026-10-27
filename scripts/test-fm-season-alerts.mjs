@@ -36,3 +36,5 @@ await assert.rejects(api.saveSeasonInspection(cf,inspection));
 const report=await api.saveSeasonInspection(extra[5],inspection);assert.equal(report.recordedBy,'sangareddy-jcf');assert.equal(report.ready,true);
 const nizamabad=await api.createSeasonSchedule(boss,{...details,district:'Nizamabad'});const nizamabadUsers=api.seasonRecipients(nizamabad,users).map(user=>user.uid);assert.ok(nizamabadUsers.includes(cf.uid)&&nizamabadUsers.includes(jcf.uid));assert.ok(!nizamabadUsers.includes('other-cf'),'Same district name in another state does not match');
 console.log('FM geographic alerts passed: state/district selection; CF/JCF, Area/District/State and oversight recipients; missing-District branch; no cross-state/district leakage; pre/post dates, catch-up/dedup/read preservation; scoped JCF inspection.');
+
+const presetOnly=await api.createSeasonSchedule(boss,{...details,state:"Andhra Pradesh",district:"Polavaram",name:"Preset district without field records"});assert.equal(presetOnly.district,"Polavaram");

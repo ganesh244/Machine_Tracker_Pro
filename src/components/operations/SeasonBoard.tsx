@@ -1,3 +1,4 @@
+import {stateOptions,districtOptions} from '../../lib/locations';
 import { isLocalDemo } from '../../lib/demo';
 import React, { useEffect, useState } from 'react';
 import { ArrowLeft, ArrowRight, CalendarDays, Check, CheckCircle2, ChevronDown, ClipboardCheck, Clock3, Leaf, MapPin, Plus, ScanLine, ShieldCheck, Sun, Tractor, TriangleAlert, X } from 'lucide-react';
@@ -22,8 +23,8 @@ export function SeasonBoard({actor,users,machines,schedules,reports,initialMachi
  const [selectedState,setSelectedState]=useState(actor.role==='farm_mechanization'?'':ownLocation.state),[selectedDistrict,setSelectedDistrict]=useState(actor.role==='farm_mechanization'?'':ownLocation.district);
  const [reportSeason,setReportSeason]=useState('all'),[reportPhase,setReportPhase]=useState('all'),[reportStatus,setReportStatus]=useState('all'),[latestReport,setLatestReport]=useState('');
  const locations=[...users.map(user=>userSeasonLocation(user,users)),...machines.map(machine=>({state:machine.state||'',district:machine.district||''}))];
- const states=[...new Set(locations.map(row=>row.state).filter(Boolean))].sort();
- const districts=[...new Set(locations.filter(row=>row.state===selectedState).map(row=>row.district).filter(Boolean))].sort();
+ const states=stateOptions(locations.map(row=>row.state));
+ const districts=districtOptions(selectedState,locations.filter(row=>row.state===selectedState).map(row=>row.district));
  const canSchedule=['admin','district_manager','farm_mechanization'].includes(actor.role),canInspect=['cf','jcf','area_manager','district_manager'].includes(actor.role);
  const allVisible=schedules.filter(schedule=>canSeeSeason(actor,schedule,users)).sort((a,b)=>b.createdAt.localeCompare(a.createdAt));
  const visible=allVisible.filter(schedule=>!schedule.archived);

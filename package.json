@@ -27,7 +27,8 @@
     "test:season-management": "node scripts/test-season-management.mjs",
     "test:batch-extension": "node scripts/test-batch-extension.mjs",
     "backend:dev": "tsx --env-file-if-exists=.env.local server/dev.ts",
-    "test:backend": "tsx scripts/test-mongo-backend.ts"
+    "test:backend": "tsx scripts/test-mongo-backend.ts",
+    "test:locations": "node scripts/test-location-presets.mjs"
   },
   "dependencies": {
     "@google/genai": "^1.29.0",

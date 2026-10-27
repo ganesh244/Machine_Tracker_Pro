@@ -1,0 +1,12 @@
+import assert from 'node:assert/strict';
+import {build} from 'esbuild';
+const bundle=await build({entryPoints:['src/lib/locations.ts'],bundle:true,write:false,format:'esm'});
+const {STATE_DISTRICTS,stateOptions,districtOptions,isPresetLocation}=await import(`data:text/javascript;base64,${Buffer.from(bundle.outputFiles[0].text).toString('base64')}`);
+assert.equal(STATE_DISTRICTS.Telangana.length,33);assert.equal(STATE_DISTRICTS['Andhra Pradesh'].length,28);
+for(const districts of Object.values(STATE_DISTRICTS))assert.equal(new Set(districts).size,districts.length);
+assert.ok(districtOptions('Telangana').includes('Sangareddy'));
+for(const district of ['Markapuram','Polavaram','Guntur'])assert.ok(districtOptions('Andhra Pradesh').includes(district));
+assert.equal(isPresetLocation('Telangana','Guntur'),false);assert.equal(isPresetLocation('Andhra Pradesh','Hyderabad'),false);
+assert.ok(stateOptions(['Existing State']).includes('Existing State'));assert.ok(districtOptions('Existing State',['Existing District']).includes('Existing District'));
+assert.deepEqual(districtOptions(''),[]);assert.equal(stateOptions(['Telangana']).length,2);
+console.log('Location presets passed: Telangana 33, Andhra Pradesh 28, state-specific districts, no duplicates, and legacy location preservation.');
