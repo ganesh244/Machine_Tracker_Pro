@@ -1,3 +1,4 @@
+import { isPresetLocation, STATE_DISTRICTS } from './locations.js';
 import { isRemoteBrowser, remoteCommand } from './backendClient.js';
 import { collection, doc, getDoc, getDocs, writeBatch } from './data.js';
 import { db } from './database.js';
@@ -14,7 +15,8 @@ export function parseQRIdentifier(text: string): string {
   if (!/^[a-zA-Z0-9._-]+$/.test(id)) throw new Error('Enter a valid printed QR ID or scan link.');
   return id;
 }
-export interface QRBatch { id: string; name: string; quantity: number; createdAt: string; createdBy: string }
+export interface QRBatchDetails { state?: string; district?: string; year?: number; season?: string }
+export interface QRBatch extends QRBatchDetails { id: string; name: string; quantity: number; createdAt: string; createdBy: string }
 export interface QRLabel { id: string; batchId: string; holderId: string; status: 'available' | 'attached'; machineId?: string; createdAt: string }
 export interface LabelTransfer { id: string; labelIds: string[]; fromUserId: string; toUserId: string; timestamp: string }
 export interface FieldMachine extends Planter { qrLabelId?: string; onboardedBy?: string; leadFarmerId?: string; cfId?: string }
@@ -59,13 +61,21 @@ async function machineFor(actor: UserProfile, id: string): Promise<FieldMachine>
   return machine;
 }
 
-export async function createQRBatch(actor: UserProfile, name: string, quantity: number): Promise<QRBatch> {
- if(isRemoteBrowser)return remoteCommand('createQRBatch',[name,quantity]);
+export async function createQRBatch(actor: UserProfile, name: string, quantity: number, details: QRBatchDetails = {}): Promise<QRBatch> {
+ if(isRemoteBrowser)return remoteCommand('createQRBatch',[name,quantity,details]);
   if (actor.role !== 'admin') throw new Error('Only the Admin team can generate QR labels.');
   required(name, 'Batch name');
   if (!Number.isInteger(quantity) || quantity < 1 || quantity > 200) throw new Error('Generate between 1 and 200 labels per batch.');
+  const state = typeof details.state === 'string' ? details.state.trim() : '';
+  const district = typeof details.district === 'string' ? details.district.trim() : '';
+  const season = typeof details.season === 'string' ? details.season.trim() : '';
+  if (state && !Object.hasOwn(STATE_DISTRICTS, state)) throw new Error('Choose a supported state.');
+  if (district && !isPresetLocation(state, district)) throw new Error('Choose a district in the selected state.');
+  if (details.year !== undefined && (!Number.isInteger(details.year) || details.year < 2000 || details.year > 2100)) throw new Error('Choose a year between 2000 and 2100.');
+  if (season && !['Kharif', 'Rabi', 'Zaid / Summer', 'Other'].includes(season)) throw new Error('Choose a valid season.');
+  const metadata: QRBatchDetails = { ...(state ? { state } : {}), ...(district ? { district } : {}), ...(details.year !== undefined ? { year: details.year } : {}), ...(season ? { season } : {}) };
   const batchId = crypto.randomUUID();
-  const batch: QRBatch = { id: batchId, name: name.trim(), quantity, createdAt: new Date().toISOString(), createdBy: actor.uid };
+  const batch: QRBatch = { id: batchId, name: name.trim(), quantity, ...metadata, createdAt: new Date().toISOString(), createdBy: actor.uid };
   const commit = writeBatch(db);
   commit.set(doc(db, 'qr_batches', batchId), batch);
   const prefix = `QR-${new Date().getFullYear()}-${batchId.slice(0, 8).toUpperCase()}`;
