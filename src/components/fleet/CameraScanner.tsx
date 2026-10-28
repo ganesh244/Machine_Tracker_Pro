@@ -1,7 +1,8 @@
+import './camera-scanner.css';
 import React, { useState, useEffect, useRef } from 'react';
 import { decodeQRImage } from '../../lib/qrScan';
 import { parseQRIdentifier } from '../../lib/fieldOperations';
-import { Camera, CheckCircle2, AlertCircle, RefreshCw, Upload, Sparkles } from 'lucide-react';
+import { Camera, CheckCircle2, AlertCircle, RefreshCw, Upload, ScanLine, Square } from 'lucide-react';
 
 export const CameraScanner: React.FC<{ embedded?: boolean }> = ({ embedded = false }) => {
   const [scanSuccess, setScanSuccess] = useState(false);
@@ -165,120 +166,19 @@ export const CameraScanner: React.FC<{ embedded?: boolean }> = ({ embedded = fal
     reader.readAsDataURL(file);
   };
 
-  return (
-    <div className={`${embedded ? 'min-h-0 rounded-2xl' : 'min-h-screen p-4'} bg-slate-950 flex flex-col items-center justify-center`}>
-      <div className="bg-slate-900 border-2 border-emerald-600 text-white rounded-[32px] max-w-md w-full shadow-2xl overflow-hidden relative">
-        <canvas ref={canvasRef} className="hidden" />
-        <input ref={fileInputRef} type="file" aria-label="QR image" accept="image/*" onChange={handleFileUpload} className="hidden" />
-
-        <div className="bg-emerald-900/30 p-5 flex items-center justify-between border-b border-emerald-900/60">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-emerald-500 to-emerald-600 flex items-center justify-center shadow-lg shadow-emerald-500/20">
-              <Camera className="w-5 h-5 text-white" />
-            </div>
-            <div>
-              <h2 className="text-lg font-bold text-white tracking-tight">Machine Scanner</h2>
-              <p className="text-xs text-emerald-200/70 font-medium">Point at QR code on the machine</p>
-            </div>
-          </div>
-          {isCameraActive && (
-            <button aria-label="Switch camera" onClick={() => { const next = facingMode === 'environment' ? 'user' : 'environment'; setFacingMode(next); startCamera(next); }} className="bg-white/10 hover:bg-white/20 p-2.5 rounded-xl transition-colors">
-              <RefreshCw className="w-5 h-5 text-emerald-100" />
-            </button>
-          )}
-        </div>
-
-        <div className="relative bg-black aspect-[3/4] sm:aspect-square flex flex-col items-center justify-center overflow-hidden">
-          <div className="absolute inset-0 bg-[radial-gradient(#10b981_1px,transparent_1px)] [background-size:24px_24px] opacity-10 pointer-events-none" />
-
-          <video
-            ref={videoRef}
-            autoPlay
-            playsInline
-            muted
-            className={`absolute inset-0 w-full h-full object-cover z-0 transition-opacity duration-300 ${
-              isCameraActive && !scanSuccess ? 'opacity-100' : 'opacity-0 pointer-events-none'
-            }`}
-          />
-
-          {isCameraActive && !scanSuccess && (
-            <div className="absolute top-0 inset-x-0 h-1 bg-gradient-to-r from-transparent via-emerald-400 to-transparent shadow-[0_0_15px_#10b981] animate-[bounce_2s_infinite] z-10 pointer-events-none" />
-          )}
-
-          <div className={`relative z-10 w-64 h-64 border-2 rounded-3xl flex items-center justify-center transition-all duration-300 shadow-2xl backdrop-blur-[2px] ${
-            scanSuccess ? 'border-emerald-400 bg-emerald-500/20 scale-105' : 'border-emerald-500/80 border-dashed bg-black/10'
-          }`}>
-            <div className="absolute -top-3 -left-3 w-8 h-8 border-t-4 border-l-4 border-emerald-500 rounded-tl-xl" />
-            <div className="absolute -top-3 -right-3 w-8 h-8 border-t-4 border-r-4 border-emerald-500 rounded-tr-xl" />
-            <div className="absolute -bottom-3 -left-3 w-8 h-8 border-b-4 border-l-4 border-emerald-500 rounded-bl-xl" />
-            <div className="absolute -bottom-3 -right-3 w-8 h-8 border-b-4 border-r-4 border-emerald-500 rounded-br-xl" />
-
-            {scanSuccess ? (
-              <div className="text-center animate-scaleIn bg-slate-900/95 p-6 rounded-2xl border border-emerald-400 shadow-xl backdrop-blur-md">
-                <CheckCircle2 className="w-12 h-12 text-emerald-400 mx-auto animate-bounce mb-3" />
-                <span className="text-sm font-bold text-white uppercase tracking-widest block mb-1">Found Machine ID</span>
-                <span className="text-lg font-mono font-bold text-emerald-400 bg-emerald-950/50 px-4 py-1.5 rounded-lg border border-emerald-800/50 block">
-                  {scannedId}
-                </span>
-              </div>
-            ) : isCameraActive ? (
-              <div className="text-center p-3 bg-black/40 rounded-xl backdrop-blur-sm pointer-events-none">
-                <span className="text-xs font-bold text-emerald-200 block uppercase tracking-wider">
-                  Align QR within frame
-                </span>
-              </div>
-            ) : (
-              <div className="text-center space-y-3 p-4">
-                <Camera className="w-10 h-10 text-slate-500 mx-auto" />
-                <span className="text-xs font-bold text-slate-400 block">Camera inactive</span>
-                <button
-                  type="button"
-                  onClick={() => startCamera(facingMode)}
-                  className="bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs px-5 py-2.5 rounded-xl transition"
-                >
-                  Enable camera
-                </button>
-              </div>
-            )}
-          </div>
-
-          {cameraError && !scanSuccess && (
-            <div className="absolute inset-x-4 bottom-4 bg-red-950/90 text-red-200 text-xs p-3 rounded-2xl border border-red-900/50 flex flex-col sm:flex-row items-center justify-between gap-3 z-20 backdrop-blur-md">
-              <div className="flex items-center gap-2 text-left">
-                <AlertCircle className="w-5 h-5 text-red-400 shrink-0" />
-                <span>{cameraError}</span>
-              </div>
-            </div>
-          )}
-
-          {scannerError && (
-            <div className="absolute top-4 inset-x-4 bg-amber-950/90 text-amber-200 text-xs p-3 rounded-2xl border border-amber-900/50 flex items-center justify-between gap-3 z-30 backdrop-blur-md">
-              <div className="flex items-center gap-2">
-                <AlertCircle className="w-5 h-5 text-amber-400 shrink-0" />
-                <span role="alert">{scannerError}</span>
-              </div>
-              <button
-                type="button"
-                onClick={() => setScannerError(null)}
-                className="text-amber-300 hover:text-white font-bold bg-amber-900/30 px-3 py-1.5 rounded-lg transition"
-              >
-                Dismiss
-              </button>
-            </div>
-          )}
-        </div>
-
-        <div className="p-5 bg-slate-900 border-t border-slate-800">
-          <button
-            type="button"
-            onClick={() => fileInputRef.current?.click()}
-            className="w-full bg-slate-800 hover:bg-slate-700 text-white font-bold text-sm py-4 rounded-xl transition flex items-center justify-center gap-2"
-          >
-            <Upload className="w-5 h-5 text-emerald-400" />
-            Upload QR Photo
-          </button>
-        </div>
-      </div>
+  return <section className={`machine-scanner ${embedded ? 'is-embedded' : ''}`} aria-label="Machine QR scanner">
+    <canvas ref={canvasRef} hidden />
+    <input ref={fileInputRef} type="file" aria-label="QR image" accept="image/*" onChange={handleFileUpload} hidden />
+    <header className="scanner-toolbar"><div className="scanner-status"><span className={`scanner-dot ${isCameraActive?'is-live':''}`}/><span>{scanSuccess?'QR detected':isCameraActive?'Camera is scanning':'Camera ready'}</span></div>{isCameraActive&&!scanSuccess&&<button type="button" className="scanner-switch" aria-label="Switch camera" onClick={()=>{const next=facingMode==='environment'?'user':'environment';setFacingMode(next);void startCamera(next);}}><RefreshCw size={17}/><span>Switch camera</span></button>}</header>
+    <div className={`scanner-view ${isCameraActive?'is-active':''} ${scanSuccess?'is-success':''}`}>
+      <video ref={videoRef} autoPlay playsInline muted className={isCameraActive&&!scanSuccess?'':'scanner-video-hidden'}/>
+      {!isCameraActive&&!scanSuccess&&<div className="scanner-idle"><span className="scanner-camera-icon"><Camera size={28}/></span><h3>Scan the machine sticker</h3><p>Use your rear camera and hold the QR steady.</p><button type="button" className="scanner-enable" onClick={()=>void startCamera(facingMode)}><Camera size={17}/>Enable camera</button></div>}
+      {isCameraActive&&!scanSuccess&&<><div className="scanner-frame" aria-hidden="true"><i/><i/><i/><i/></div><span className="scanner-live-hint"><ScanLine size={15}/>Keep the QR inside the frame</span></>}
+      {scanSuccess&&<div className="scanner-success" role="status"><CheckCircle2 size={38}/><h3>Machine QR found</h3><strong>{scannedId}</strong><p>Opening the machine record…</p></div>}
     </div>
-  );
+    <div className="scanner-guidance"><ScanLine size={18}/><p>{isCameraActive?'Move closer until the QR is clear. Avoid glare and keep the sticker fully visible.':'Camera access starts only when you enable it. You can also upload a photo of the QR sticker.'}</p></div>
+    {(cameraError||scannerError)&&<div className="scanner-error" role="alert"><AlertCircle size={18}/><p>{scannerError||cameraError}</p>{scannerError&&<button type="button" onClick={()=>setScannerError(null)}>Dismiss</button>}</div>}
+    <footer className="scanner-actions"><button type="button" className="scanner-upload" onClick={()=>fileInputRef.current?.click()} disabled={scanSuccess}><Upload size={18}/>Upload QR photo</button>{isCameraActive&&!scanSuccess&&<button type="button" className="scanner-stop" onClick={stopCameraStream}><Square size={15}/>Stop camera</button>}</footer>
+    <p className="scanner-footnote">The QR opens the machine’s onboarding or field record.</p>
+  </section>;
 };
