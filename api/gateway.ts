@@ -18,8 +18,9 @@ export default async function handler(req:any,res:any){
   const origin=req.headers.origin;if(origin&&origin!==expected&&!(process.env.NODE_ENV!=='production'&&/^http:\/\/(localhost|127\.0\.0\.1):\d+$/.test(origin)))return res.status(403).json({error:'Request origin is not allowed.'});
   if(!String(req.headers['content-type']||'').startsWith('application/json'))return res.status(415).json({error:'Use JSON.'});
   const body=typeof req.body==='string'?JSON.parse(req.body):req.body||{};if(JSON.stringify(body).length>4000000)return res.status(413).json({error:'Upload is too large. Use fewer or smaller photos.'});safeInput(body);
+  const requestStarted=Date.now();
   const action=String(req.query?.action||new URL(req.url,'http://localhost').searchParams.get('action')||'');
-  await ensureIndexes();const {db}=await mongo();
+  await ensureIndexes();const {db}=await mongo();console.info('FarmMech database ready',{action,elapsed:Date.now()-requestStarted});
   if(action==='session'){const user=await currentUser(req);return res.json({user,setupRequired:!(await db.collection('accounts').countDocuments({}))});}
   if(action==='setup'){await throttle('setup:'+String(req.headers['x-forwarded-for']||req.socket?.remoteAddress||''),5);const user=await setupAdmin(body);res.setHeader('Set-Cookie',cookie(await issueSession(user.uid)));return res.json({user});}
   if(action==='login'){
@@ -38,9 +39,10 @@ export default async function handler(req:any,res:any){
   const actor=await currentUser(req);if(!actor)return res.status(401).json({error:'Sign in to continue.'});
   if(action==='read'||action==='readMany'){
    if(action==='readMany'&&(!Array.isArray(body.refs)||!body.refs.length||body.refs.length>50))throw new Error('Choose between 1 and 50 record references.');
-   const refs=(action==='readMany'?body.refs:[body.ref]).map(validateRef),visible=visibleRecords(actor,await records());
+   const refs=(action==='readMany'?body.refs:[body.ref]).map(validateRef);console.info('FarmMech loading records',{action,elapsed:Date.now()-requestStarted});const visible=visibleRecords(actor,await records());console.info('FarmMech records loaded',{action,count:Object.keys(visible).length,elapsed:Date.now()-requestStarted});
    return context.run({records:visible,changed:new Set()},async()=>{
     const results=await Promise.all(refs.map(async(ref:any)=>{if(ref.kind==='doc'){const row=await getDoc(ref);return {path:ref.path,value:row.data()};}const result=await getDocs(ref);return {rows:result.docs.map((row:any)=>({path:row.ref.path,value:row.data()}))};}));
+    console.info('FarmMech read completed',{action,collections:refs.map((ref:any)=>ref.path),counts:results.map((result:any)=>result.rows?.length??(result.value?1:0)),bytes:Buffer.byteLength(JSON.stringify(results))});
     return res.json(action==='readMany'?{results}:results[0]);
    });
   }
