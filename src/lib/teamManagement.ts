@@ -27,3 +27,19 @@ export async function createTeamUser(actor: UserProfile, details: { username?:st
   commit.set(doc(db, 'team_audit', crypto.randomUUID()), { action: 'User created', userId: user.uid, role: user.role, parentId: user.parentId, createdBy: actor.uid, timestamp: new Date().toISOString() });
   await commit.commit(); return user;
 }
+
+/** Correct a display name without changing login credentials or reporting links. */
+export async function updateTeamUserName(actor: UserProfile, uid: string, displayName: string) {
+ if(isRemoteBrowser)return remoteCommand('updateTeamUserName',[uid,displayName]);
+ const profile=await getDoc(doc(db,'users',actor.uid));
+ if(actor.role!=='admin'||!profile.exists()||profile.data().role!=='admin')throw new Error('Only Admin can edit team names.');
+ if(typeof displayName!=='string'||displayName.trim().length<2||displayName.trim().length>100)throw new Error('Enter a name of 2–100 characters.');
+ const snapshot=await getDoc(doc(db,'users',uid));
+ if(!snapshot.exists())throw new Error('User not found.');
+ const user={...snapshot.data(),displayName:displayName.trim()} as UserProfile;
+ const commit=writeBatch(db);
+ commit.set(doc(db,'users',uid),user);
+ commit.set(doc(db,'publicProfiles',uid),user);
+ commit.set(doc(db,'team_audit',crypto.randomUUID()),{action:'Name corrected',userId:uid,previousName:snapshot.data().displayName,displayName:user.displayName,createdBy:actor.uid,timestamp:new Date().toISOString()});
+ await commit.commit();return user;
+}

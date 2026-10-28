@@ -23,3 +23,13 @@ for(const role of ['state_manager','district_manager','area_manager','cf','jcf']
 assert.equal(workflow.branchIds((await data.getDocs(data.collection({},'users'))).docs.map(d=>d.data()),admin.uid).has(parent.uid),true);
 assert.equal((await data.getDocs(data.collection({},'team_audit'))).size,6);
 console.log('Team management passed: Admin-only creation, all five operational roles, reporting hierarchy, duplicate email, persisted profiles and creation audit.');
+
+for(const actor of [state,district,area,cf,jcf]) await assert.rejects(workflow.updateTeamUserName(actor,created.uid,'Sai'));
+await assert.rejects(workflow.updateTeamUserName({...cf,role:'admin'},created.uid,'Sai'));
+await assert.rejects(workflow.updateTeamUserName(admin,created.uid,' '));
+await assert.rejects(workflow.updateTeamUserName(admin,'missing','Sai'));
+const corrected=await workflow.updateTeamUserName(admin,created.uid,'Sai');
+assert.deepEqual(corrected,{...created,displayName:'Sai'});
+assert.deepEqual((await data.getDoc(data.doc({},'publicProfiles',created.uid))).data(),corrected);
+assert.equal((await data.getDocs(data.collection({},'team_audit'))).size,7);
+console.log('Name correction passed: Admin-only, validation, public profile sync, audit, preserved identity and reporting links.');
