@@ -22,7 +22,9 @@ export async function mongo(){
 }
 let cachedRecords:{version:number;records:Record<string,any>}|undefined;
 let loadingRecords:Promise<Record<string,any>>|undefined;
-export function invalidateRecords(){cachedRecords=undefined;}
+let cachedLists:{version:number;records:Record<string,any>}|undefined;
+let loadingLists:Promise<Record<string,any>>|undefined;
+export function invalidateRecords(){cachedRecords=undefined;cachedLists=undefined;}
 async function loadRecords(session?:ClientSession,collections?:string[]){
  const {db}=await mongo();
  const filter=collections?{path:{$regex:'^('+collections.join('|')+')/'}}:{};
@@ -39,10 +41,33 @@ export async function records(session?:ClientSession,collections?:string[]){
   const rows=await loadRecords();cachedRecords={version,records:rows};return rows;
  })().finally(()=>{loadingRecords=undefined;});return loadingRecords;
 }
+// Mongo computes photo placeholders before transfer: metadata reads never fetch base64.
+async function metadataRecords(session?:ClientSession,collections?:string[]){
+ const {db}=await mongo();
+ const arrays=Object.fromEntries(['photos','gallery'].map(field=>['value.'+field,{$cond:[{$isArray:'$value.'+field},{$map:{input:{$range:[0,{$size:'$value.'+field}]},as:'index',in:''}},'$$REMOVE']}]));
+ const rows=await db.collection('documents').aggregate([...(collections?[{$match:{path:{$regex:'^('+collections.join('|')+')/'}}}]:[]),{$set:{...arrays,'value.imageUrl':{$cond:[{$ifNull:['$value.imageUrl',false]},true,'$$REMOVE']}}}],{session,maxTimeMS:20000}).toArray();
+ return Object.fromEntries(rows.map(row=>[row.path,row.value]));
+}
+export async function listRecords(){
+ if(loadingLists)return loadingLists;
+ loadingLists=(async()=>{const {db}=await mongo();const version=(await db.collection('sync_meta').findOne({_id:'records' as any}))?.revision||0;
+  if(cachedLists?.version===version)return cachedLists.records;
+  const result=await metadataRecords();cachedLists={version,records:result};return result;
+ })().finally(()=>{loadingLists=undefined;});return loadingLists;
+}
 let indexed:Promise<unknown>|undefined;
 export async function ensureIndexes(){return indexed ||= (async()=>{const {db}=await mongo();await db.collection('documents').createIndex({path:1},{unique:true});await db.collection('accounts').createIndex({username:1},{unique:true});await db.collection('accounts').createIndex({uid:1},{unique:true});await db.collection('sessions').createIndex({tokenHash:1},{unique:true});await db.collection('sessions').createIndex({expiresAt:1},{expireAfterSeconds:0});await db.collection('login_limits').createIndex({expiresAt:1},{expireAfterSeconds:0});})().catch(error=>{indexed=undefined;throw error;});}
 export async function transaction<T>(operation:(session:ClientSession)=>Promise<T>,collections?:string[]){
  await ensureIndexes();const {client,db}=await mongo();const session=client.startSession();
- try{return await session.withTransaction(async()=>{const store:ServerStore={records:await records(session,collections),changed:new Set()};return context.run(store,async()=>{const result=await operation(session);const writes=[...store.changed].map(path=>store.records[path]===undefined?{deleteOne:{filter:{path}}}:{replaceOne:{filter:{path},replacement:{path,value:store.records[path]},upsert:true}});if(writes.length){await db.collection('documents').bulkWrite(writes,{session});await db.collection('sync_meta').updateOne({_id:'records' as any},{$inc:{revision:1}},{upsert:true,session});invalidateRecords();}return result;});},{readConcern:{level:'snapshot'},writeConcern:{w:'majority'}});}finally{await session.endSession();}
+ try{return await session.withTransaction(async()=>{const original=await metadataRecords(session,collections);const store:ServerStore={records:structuredClone(original),changed:new Set()};return context.run(store,async()=>{const result=await operation(session);const writes:any[]=[];
+ // Patch only changed top-level fields. Untouched photo bytes stay in MongoDB;
+ // do not replace an existing record with its metadata placeholders.
+ for(const path of store.changed){const next=store.records[path],before=original[path];
+  if(next===undefined){writes.push({deleteOne:{filter:{path}}});continue;}
+  if(before===undefined){writes.push({insertOne:{document:{path,value:next}}});continue;}
+  const set:Record<string,any>={},unset:Record<string,any>={};
+  for(const key of new Set([...Object.keys(before),...Object.keys(next)]))if(JSON.stringify(before[key])!==JSON.stringify(next[key])){if(next[key]===undefined)unset['value.'+key]='';else set['value.'+key]=next[key];}
+  if(Object.keys(set).length||Object.keys(unset).length)writes.push({updateOne:{filter:{path},update:{...(Object.keys(set).length?{$set:set}:{}),...(Object.keys(unset).length?{$unset:unset}:{})}}});
+ }if(writes.length){await db.collection('documents').bulkWrite(writes,{session});await db.collection('sync_meta').updateOne({_id:'records' as any},{$inc:{revision:1}},{upsert:true,session});invalidateRecords();}return result;});},{readConcern:{level:'snapshot'},writeConcern:{w:'majority'}});}finally{await session.endSession();}
 }
-export async function closeMongo(){if(connection)await (await connection).close();connection=undefined;indexed=undefined;cachedRecords=undefined;loadingRecords=undefined;}
+export async function closeMongo(){if(connection)await (await connection).close();connection=undefined;indexed=undefined;cachedRecords=undefined;loadingRecords=undefined;cachedLists=undefined;loadingLists=undefined;}

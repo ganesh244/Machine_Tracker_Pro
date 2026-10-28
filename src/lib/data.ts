@@ -109,12 +109,21 @@ function remoteRead(ref:LocalRef):Promise<any>{
  }).finally(()=>pendingReads.delete(key));pendingReads.set(key,promise);return promise;
 }
 function remoteSubscribe(ref:LocalRef,callback:any,onError?:any){
- let active=true,running=false,refreshPending=false,failures=0;let timer:ReturnType<typeof setTimeout>|undefined;
+ let active=true,running=false,refreshPending=false,failures=0,generation=0;let latest:any;let timer:ReturnType<typeof setTimeout>|undefined;
  const emit=async()=>{
   if(!active)return;if(running){refreshPending=true;return;}if(timer)clearTimeout(timer);
-  running=true;try{const result=await remoteRead(ref);failures=0;if(active)(typeof callback==='function'?callback:callback.next)(result);}catch(error){failures++;if(active)onError?.(error);}finally{running=false;if(active){const delay=refreshPending?100:Math.min(60000,15000*2**Math.min(failures,2));refreshPending=false;timer=setTimeout(()=>{if(typeof document!=='undefined'&&document.hidden){timer=setTimeout(emit,15000);return;}void emit();},delay);}}
+  running=true;const started=generation;try{const result=await remoteRead(ref);failures=0;if(active&&started===generation){latest=result;(typeof callback==='function'?callback:callback.next)(result);}}catch(error){failures++;if(active)onError?.(error);}finally{running=false;if(active){const delay=refreshPending?100:failures?Math.min(60000,15000*2**Math.min(failures,2)):5000;refreshPending=false;timer=setTimeout(()=>{if(typeof document!=='undefined'&&document.hidden){timer=setTimeout(emit,15000);return;}void emit();},delay);}}
  };
- const refresh=()=>{void emit();};const visible=()=>{if(typeof document==='undefined'||!document.hidden)refresh();};void emit();window.addEventListener('farmmech-data-changed',refresh);window.addEventListener('focus',visible);window.addEventListener('online',visible);if(typeof document!=='undefined')document.addEventListener('visibilitychange',visible);
+ const refresh=(event?:Event)=>{
+  const changes=(event as CustomEvent)?.detail?.changes;
+  if(changes&&latest&&!ref.constraints?.length){
+   generation++;
+   if(ref.kind==='doc'){if(Object.hasOwn(changes,ref.path))latest=snapshot(ref.path,changes[ref.path]);}
+   else{const rows=new Map<string,any>(latest.docs.map((row:any)=>[row.ref.path,row.data()]));for(const [path,value] of Object.entries(changes))if(path.startsWith(ref.path+'/')&&path.split('/').length===ref.path.split('/').length+1){if(value===null)rows.delete(path);else rows.set(path,value);}const docs=[...rows].map(([path,value])=>snapshot(path,value));latest={docs,size:docs.length,empty:!docs.length,forEach:(fn:any)=>docs.forEach(fn)};}
+   (typeof callback==='function'?callback:callback.next)(latest);
+  }
+  void emit();
+ };const visible=()=>{if(typeof document==='undefined'||!document.hidden)refresh();};void emit();window.addEventListener('farmmech-data-changed',refresh);window.addEventListener('focus',visible);window.addEventListener('online',visible);if(typeof document!=='undefined')document.addEventListener('visibilitychange',visible);
  return()=>{active=false;if(timer)clearTimeout(timer);window.removeEventListener('farmmech-data-changed',refresh);window.removeEventListener('focus',visible);window.removeEventListener('online',visible);if(typeof document!=='undefined')document.removeEventListener('visibilitychange',visible);};
 }
 

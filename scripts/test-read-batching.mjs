@@ -19,3 +19,12 @@ const stopRecovery=api.onSnapshot(users,()=>recovered++,()=>failures++);
 await new Promise(resolve=>setTimeout(resolve,30));assert.equal(failures,1);
 window.dispatchEvent(new Event('online'));await new Promise(resolve=>setTimeout(resolve,30));assert.equal(recovered,1,'online event retries immediately after failure');stopRecovery();
 console.log('Recovery passed: temporary failure is reported and online event restores the subscription.');
+
+let patchRelease;let patchCalls=0;const seen=[];
+globalThis.__readBackend=async(action,body)=>{patchCalls++;if(patchCalls>1)await new Promise(resolve=>{patchRelease=resolve;});return {results:body.refs.map(ref=>({rows:[{path:ref.path+'/one',value:{id:'one',status:'old'}}]}))};};
+const stopPatch=api.onSnapshot(machines,snapshot=>seen.push(snapshot.docs.map(row=>row.data())));
+await new Promise(resolve=>setTimeout(resolve,30));window.dispatchEvent(new Event('farmmech-data-changed'));await new Promise(resolve=>setTimeout(resolve,30));
+const patchEvent=new Event('farmmech-data-changed');patchEvent.detail={changes:{'planters/one':{id:'one',status:'saved'},'planters/two':{id:'two',status:'new'}}};window.dispatchEvent(patchEvent);
+assert.deepEqual(seen.at(-1).map(row=>row.status),['saved','new'],'committed changes appear without waiting for a read');
+patchRelease();await new Promise(resolve=>setTimeout(resolve,20));assert.deepEqual(seen.at(-1).map(row=>row.status),['saved','new'],'older in-flight response cannot overwrite committed changes');stopPatch();
+console.log('Immediate save updates passed: committed records render immediately and stale in-flight reads cannot overwrite them.');

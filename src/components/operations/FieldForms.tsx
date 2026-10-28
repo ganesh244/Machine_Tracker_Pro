@@ -16,7 +16,7 @@ export function PhotoProof({ src, alt }: { src: string; alt: string }) {
     window.addEventListener('keydown', handle, true);
     return () => window.removeEventListener('keydown', handle, true);
   }, [open]);
-  return <div className="fo-proof"><button type="button" aria-label={`View ${alt}`} onClick={() => setOpen(true)}><img src={src} alt={alt} /></button>{open && <div className="fo-photo-lightbox" role="dialog" aria-modal="true" aria-label={alt} onClick={() => setOpen(false)}><button type="button" aria-label="Close photo" onClick={() => setOpen(false)}>×</button><img src={src} alt={alt} onClick={event => event.stopPropagation()} /><p>{alt}</p></div>}</div>;
+  return <div className="fo-proof"><button type="button" aria-label={`View ${alt}`} onClick={() => setOpen(true)}><img loading="lazy" decoding="async" src={src} alt={alt} /></button>{open && <div className="fo-photo-lightbox" role="dialog" aria-modal="true" aria-label={alt} onClick={() => setOpen(false)}><button type="button" aria-label="Close photo" onClick={() => setOpen(false)}>×</button><img loading="lazy" decoding="async" src={src} alt={alt} onClick={event => event.stopPropagation()} /><p>{alt}</p></div>}</div>;
 }
 export function PhotoPicker({ photos, onChange, label = 'Photos', required = true }: { photos: string[]; onChange: (photos: string[]) => void; label?: string; required?: boolean }) {
   const [error, setError] = useState(''), [busy, setBusy] = useState(false);
@@ -33,7 +33,7 @@ export function PhotoPicker({ photos, onChange, label = 'Photos', required = tru
     finally { setBusy(false); }
   };
   return <div className="fo-photo-field"><p className="fo-label">{label} {required && <span className="fo-required">*</span>}</p>
-    <div className="fo-photo-grid">{photos.map((photo, index) => <div key={index} className="fo-photo-thumb"><img src={photo} alt={`${label} ${index + 1}`} /><button type="button" aria-label={`Remove photo ${index + 1}`} onClick={() => onChange(photos.filter((_, position) => position !== index))}><Trash2 size={14} /></button></div>)}
+    <div className="fo-photo-grid">{photos.map((photo, index) => <div key={index} className="fo-photo-thumb"><img loading="lazy" decoding="async" src={photo} alt={`${label} ${index + 1}`} /><button type="button" aria-label={`Remove photo ${index + 1}`} onClick={() => onChange(photos.filter((_, position) => position !== index))}><Trash2 size={14} /></button></div>)}
       {photos.length < 3 && <label className="fo-upload"><Camera size={23} /><strong>{busy ? 'Preparing…' : 'Add a photo'}</strong><small>Take a photo or choose a file</small><input aria-label={label} type="file" accept="image/*" multiple disabled={busy} onChange={event => { void upload(event.target.files); event.target.value = ''; }} /></label>}
     </div>
     <small className="fo-photo-size-note">{busy?'Optimizing photos before upload…':photos.length?`${photos.length} photo${photos.length===1?'':'s'} · ${Math.round(photos.reduce((sum,photo)=>sum+(photo.startsWith('data:image/')?photoBytes(photo):0),0)/1024)} KB total`:'Photos are automatically resized and compressed before upload.'}</small>

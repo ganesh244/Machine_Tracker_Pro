@@ -1,5 +1,6 @@
+import { linkedRecords, mediaLinks } from '../server/media.js';
 import { isPresetLocation } from '../src/lib/locations.js';
-import { mongo, ensureIndexes, records, transaction, context, invalidateRecords } from '../server/mongo.js';
+import { mongo, ensureIndexes, records, transaction, context, invalidateRecords, listRecords } from '../server/mongo.js';
 import { validateCredentials, verifyPassword, hashPassword, issueSession, currentUser, logout, cookie, throttle, setupAdmin } from '../server/auth.js';
 import { visibleRecords } from '../server/scope.js';
 import * as field from '../src/lib/fieldOperations.js';
@@ -14,6 +15,17 @@ function validateRef(ref:any){if(!ref||!['doc','collection'].includes(ref.kind)|
 export default async function handler(req:any,res:any){
  res.setHeader('Cache-Control','no-store');res.setHeader('X-Content-Type-Options','nosniff');
  try{
+  if(req.method==='GET'&&req.query?.action==='media'){
+   const actor=await currentUser(req);if(!actor)return res.status(401).end();
+   const path=String(req.query.path||''),field=String(req.query.field||''),index=Number(req.query.index);
+   if(!/^[a-zA-Z0-9_\-/]+$/.test(path)||!['photos','gallery','imageUrl'].includes(field)||!Number.isInteger(index)||index<0||index>50)return res.status(400).end();
+   if(!Object.hasOwn(visibleRecords(actor,await listRecords()),path))return res.status(404).end();
+   const {db}=await mongo();const row=await db.collection('documents').findOne({path},{projection:{['value.'+field]:1}});const source=field==='imageUrl'?row?.value?.[field]:row?.value?.[field]?.[index];
+   if(typeof source!=='string')return res.status(404).end();
+   const match=source.match(/^data:(image\/(?:jpeg|png|webp|gif));base64,([a-zA-Z0-9+/=\s]+)$/);
+   if(!match)return res.status(404).end();
+   res.setHeader('Content-Type',match[1]);return res.send(Buffer.from(match[2],'base64'));
+  }
   if(req.method!=='POST')return res.status(405).json({error:'Use POST.'});
   const expected=process.env.APP_ORIGIN||`https://${process.env.VERCEL_PROJECT_PRODUCTION_URL||'farmmech-machine-tracker.vercel.app'}`;
   const origin=req.headers.origin;if(origin&&origin!==expected&&!(process.env.NODE_ENV!=='production'&&/^http:\/\/(localhost|127\.0\.0\.1):\d+$/.test(origin)))return res.status(403).json({error:'Request origin is not allowed.'});
@@ -40,7 +52,7 @@ export default async function handler(req:any,res:any){
   const actor=await currentUser(req);if(!actor)return res.status(401).json({error:'Sign in to continue.'});
   if(action==='read'||action==='readMany'){
    if(action==='readMany'&&(!Array.isArray(body.refs)||!body.refs.length||body.refs.length>50))throw new Error('Choose between 1 and 50 record references.');
-   const refs=(action==='readMany'?body.refs:[body.ref]).map(validateRef);console.info('FarmMech loading records',{action,elapsed:Date.now()-requestStarted});const visible=visibleRecords(actor,await records());console.info('FarmMech records loaded',{action,count:Object.keys(visible).length,elapsed:Date.now()-requestStarted});
+   const refs=(action==='readMany'?body.refs:[body.ref]).map(validateRef);console.info('FarmMech loading records',{action,elapsed:Date.now()-requestStarted});const visible=linkedRecords(visibleRecords(actor,await listRecords()));console.info('FarmMech records loaded',{action,count:Object.keys(visible).length,elapsed:Date.now()-requestStarted});
    return context.run({records:visible,changed:new Set()},async()=>{
     const results=await Promise.all(refs.map(async(ref:any)=>{if(ref.kind==='doc'){const row=await getDoc(ref);return {path:ref.path,value:row.data()};}const result=await getDocs(ref);return {rows:result.docs.map((row:any)=>({path:row.ref.path,value:row.data()}))};}));
     console.info('FarmMech read completed',{action,collections:refs.map((ref:any)=>ref.path),counts:results.map((result:any)=>result.rows?.length??(result.value?1:0)),bytes:Buffer.byteLength(JSON.stringify(results))});
@@ -86,7 +98,7 @@ export default async function handler(req:any,res:any){
     const user=await transaction(async session=>{const current=context.getStore()!.records['users/'+actor.uid];if(current?.role!=='admin')throw new Error('Admin access required.');const {password:ignoredPassword,...publicDetails}=details;const profile=await createTeamUser(current,publicDetails);await db.collection('accounts').insertOne({uid:profile.uid,username:details.username.toLowerCase(),passwordHash,createdAt:new Date()},{session});return profile;});return res.json({result:user});
    }
    const command=Object.hasOwn(commands,body.name)?commands[body.name]:undefined;if(!command)return res.status(400).json({error:'Unknown operation.'});
-   const result=await transaction(async()=>{const canonical=context.getStore()!.records['users/'+actor.uid];if(!canonical)throw new Error('Account not found.');return command(canonical,...args);},['updateSeasonSchedule','archiveSeasonSchedule'].includes(body.name)||(body.name==='createSeasonSchedule'&&isPresetLocation(args[0]?.state,args[0]?.district))?['users','season_schedules','notifications','planters']:undefined);return res.json({result:result??null});
+   const result=await transaction(async()=>{const canonical=context.getStore()!.records['users/'+actor.uid];if(!canonical)throw new Error('Account not found.');const result=await command(canonical,...args);const store=context.getStore()!;const visible=visibleRecords(canonical,store.records);return {result:result??null,changes:Object.fromEntries([...store.changed].filter(path=>Object.hasOwn(visible,path)).map(path=>[path,mediaLinks(path,visible[path])]))};},['updateSeasonSchedule','archiveSeasonSchedule'].includes(body.name)||(body.name==='createSeasonSchedule'&&isPresetLocation(args[0]?.state,args[0]?.district))?['users','season_schedules','notifications','planters']:undefined);return res.json(result);
   }
   return res.status(404).json({error:'Unknown request.'});
  }catch(error:any){
