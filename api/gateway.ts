@@ -1,4 +1,4 @@
-import { mongo, ensureIndexes, records, transaction, context } from '../server/mongo.js';
+import { mongo, ensureIndexes, records, transaction, context, invalidateRecords } from '../server/mongo.js';
 import { validateCredentials, verifyPassword, hashPassword, issueSession, currentUser, logout, cookie, throttle, setupAdmin } from '../server/auth.js';
 import { visibleRecords } from '../server/scope.js';
 import * as field from '../src/lib/fieldOperations.js';
@@ -75,11 +75,11 @@ export default async function handler(req:any,res:any){
   if(action==='export'){return res.json({records:visibleRecords(actor,await records()),exportedAt:new Date().toISOString(),version:1});}
   if(action==='notificationRead'){
    const path=String(body.path||'');if(!/^notifications\/[^/]+$/.test(path)||Object.keys(body.value||{}).join(',')!=='read'||body.value.read!==true)return res.status(403).json({error:'Only your notification read state can be changed.'});
-   const result=await db.collection('documents').updateOne({path,'value.userId':actor.uid},{$set:{'value.read':true}});if(!result.matchedCount)return res.status(403).json({error:'Notification unavailable.'});return res.json({ok:true});
+   const result=await db.collection('documents').updateOne({path,'value.userId':actor.uid},{$set:{'value.read':true}});if(!result.matchedCount)return res.status(403).json({error:'Notification unavailable.'});await db.collection('sync_meta').updateOne({_id:'records' as any},{$inc:{revision:1}},{upsert:true});invalidateRecords();return res.json({ok:true});
   }
   if(action==='command'){
    await throttle('command:'+actor.uid,300);const args=body.args;if(!Array.isArray(args)||args.length>5)throw new Error('Invalid command arguments.');
-   if(body.name==='dispatchSeasonAlerts'){await transaction(()=>seasons.dispatchSeasonAlerts());return res.json({result:null});}
+   if(body.name==='dispatchSeasonAlerts'){await transaction(()=>seasons.dispatchSeasonAlerts(),['users','season_schedules','notifications']);return res.json({result:null});}
    if(body.name==='createTeamUser'){
     if(actor.role!=='admin')return res.status(403).json({error:'Only Admin can create accounts.'});const details=args[0];validateCredentials(details?.username,details?.password);const passwordHash=await hashPassword(details.password);
     const user=await transaction(async session=>{const current=context.getStore()!.records['users/'+actor.uid];if(current?.role!=='admin')throw new Error('Admin access required.');const {password:ignoredPassword,...publicDetails}=details;const profile=await createTeamUser(current,publicDetails);await db.collection('accounts').insertOne({uid:profile.uid,username:details.username.toLowerCase(),passwordHash,createdAt:new Date()},{session});return profile;});return res.json({result:user});

@@ -10,7 +10,7 @@
   ],
   "functions": {
     "api/gateway.ts": {
-      "maxDuration": 30
+      "maxDuration": 120
     }
   }
 }
