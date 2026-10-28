@@ -1,3 +1,4 @@
+import { MACHINE_TYPES } from './fieldOperations.js';
 import { isPresetLocation } from './locations.js';
 import { isRemoteBrowser, remoteCommand } from './backendClient.js';
 import { collection, doc, getDoc, getDocs, writeBatch } from './data.js';
@@ -5,7 +6,7 @@ import { db } from './database.js';
 import { branchIds, reportingAncestors, canManageMachine, type FieldMachine } from './fieldOperations.js';
 import { raiseMaintenance } from './maintenance.js';
 import type { UserProfile } from '../types.js';
-export interface SeasonSchedule { id:string; name:string; state?:string; audience?:'branch'|'location'; district:string; ownerId:string; seasonStart:string; seasonEnd:string; preAlertDate:string; postAlertDate:string; createdAt:string; archived?:boolean; updatedAt?:string; coverage?:'selected_machines'|'all_machines'; machineIds?:string[]; recipientIds?:string[] }
+export interface SeasonSchedule { id:string; name:string; state?:string; audience?:'branch'|'location'; district:string; ownerId:string; seasonStart:string; seasonEnd:string; preAlertDate:string; postAlertDate:string; createdAt:string; archived?:boolean; updatedAt?:string; coverage?:'selected_machines'|'machine_types'|'all_machines'; machineIds?:string[]; machineTypes?:string[]; recipientIds?:string[] }
 export interface SeasonInspection { id:string; scheduleId:string; machineId:string; scannedQRId?:string; phase:'pre'|'post'; ready:boolean; checks:Record<string,boolean>; notes:string; photos:string[]; maintenanceId?:string; recordedBy:string; recordedByName:string; timestamp:string }
 export const PRE_CHECKS:Record<string,string>={mechanism:'Mechanism / moving parts checked',safety:'Safety guards and fasteners okay',trial:'Trial run completed',ready:'Machine ready for field use'};
 export const POST_CHECKS:Record<string,string>={cleaned:'Machine cleaned',lubricated:'Lubrication / regular service completed',covered:'Machine covered',secure:'Parked in a secure location',shade:'Parked under shade'};
@@ -20,9 +21,9 @@ export function userSeasonLocation(user:UserProfile,users:UserProfile[]) {
 }
 function locationAudience(schedule:SeasonSchedule,users:UserProfile[]){return schedule.audience==='location'||users.find(user=>user.uid===schedule.ownerId)?.role==='farm_mechanization';}
 function inSeasonLocation(user:UserProfile,schedule:SeasonSchedule,users:UserProfile[]){const location=userSeasonLocation(user,users);return same(location.state,schedule.state)&&(user.role==='state_manager'||same(location.district,schedule.district));}
-export function machineInSeason(machine:FieldMachine,schedule:SeasonSchedule,users:UserProfile[]){if(schedule.coverage==='selected_machines'&&!schedule.machineIds?.includes(machine.id))return false;return locationAudience(schedule,users)?same(machine.state,schedule.state)&&same(machine.district,schedule.district):branchIds(users,schedule.ownerId).has(machine.cfId||machine.currentHolderId);}
+export function machineInSeason(machine:FieldMachine,schedule:SeasonSchedule,users:UserProfile[]){if(schedule.coverage==='selected_machines'&&!schedule.machineIds?.includes(machine.id))return false;if(schedule.coverage==='machine_types'&&!schedule.machineTypes?.some(type=>same(type,machine.machineType||machine.type)))return false;return locationAudience(schedule,users)?same(machine.state,schedule.state)&&same(machine.district,schedule.district):branchIds(users,schedule.ownerId).has(machine.cfId||machine.currentHolderId);}
 export function seasonRecipients(schedule:SeasonSchedule,users:UserProfile[]) {
- if(schedule.coverage==='selected_machines')return users.filter(user=>['admin','farm_mechanization'].includes(user.role)||schedule.recipientIds?.includes(user.uid));
+ if(schedule.coverage==='selected_machines'||schedule.coverage==='machine_types')return users.filter(user=>['admin','farm_mechanization'].includes(user.role)||schedule.recipientIds?.includes(user.uid));
  if(locationAudience(schedule,users)) return users.filter(user=>['admin','farm_mechanization'].includes(user.role)||inSeasonLocation(user,schedule,users));
  const branch=branchIds(users,schedule.ownerId),ancestors=new Set(reportingAncestors(users,schedule.ownerId).map(user=>user.uid));
  return users.filter(user=>branch.has(user.uid)||ancestors.has(user.uid)||['admin','farm_mechanization'].includes(user.role));
@@ -31,16 +32,17 @@ export function canSeeSeason(actor:UserProfile,schedule:SeasonSchedule,users:Use
 export function canManageSeason(actor:UserProfile,schedule:SeasonSchedule){return ['admin','farm_mechanization'].includes(actor.role)||actor.role==='district_manager'&&schedule.ownerId===actor.uid;}
 export function canInspectSeason(actor:UserProfile,schedule:SeasonSchedule,users:UserProfile[]){return !schedule.archived&&['cf','jcf','area_manager','district_manager'].includes(actor.role)&&canSeeSeason(actor,schedule,users);}
 async function targetMachines(actor:UserProfile,schedule:SeasonSchedule,users:UserProfile[]){
- if(schedule.coverage&&!['selected_machines','all_machines'].includes(schedule.coverage))throw new Error('Choose a valid machine coverage.');
- if(schedule.coverage!=='selected_machines')return {coverage:'all_machines' as const,machineIds:[],recipientIds:[]};
- if(!Array.isArray(schedule.machineIds)||!schedule.machineIds.length||schedule.machineIds.length>500||schedule.machineIds.some(id=>typeof id!=='string'))throw new Error('Select at least one machine (up to 500 per plan).');
- const ids=[...new Set(schedule.machineIds)];const machines=(await getDocs(collection(db,'planters'))).docs.map(row=>row.data() as FieldMachine);
- const selected=ids.map(id=>machines.find(machine=>machine.id===id));
+ if(schedule.coverage&&!['selected_machines','machine_types','all_machines'].includes(schedule.coverage))throw new Error('Choose a valid machine coverage.');
+ if(schedule.coverage==='all_machines'||!schedule.coverage)return {coverage:'all_machines' as const,machineIds:[],recipientIds:[]};
+ if(schedule.coverage==='machine_types'&&(!Array.isArray(schedule.machineTypes)||!schedule.machineTypes.length||schedule.machineTypes.some(type=>!MACHINE_TYPES.includes(type as typeof MACHINE_TYPES[number]))))throw new Error('Choose at least one valid machine type.');
+ if(schedule.coverage==='selected_machines'&&(!Array.isArray(schedule.machineIds)||!schedule.machineIds.length||schedule.machineIds.length>500||schedule.machineIds.some(id=>typeof id!=='string')))throw new Error('Select at least one machine (up to 500 per plan).');
+ const ids=[...new Set(schedule.machineIds||[])];const machines=(await getDocs(collection(db,'planters'))).docs.map(row=>row.data() as FieldMachine);
+ const selected=schedule.coverage==='machine_types'?machines.filter(machine=>machineInSeason(machine,schedule,users)&&canManageMachine(actor,machine,users)):ids.map(id=>machines.find(machine=>machine.id===id));
  const base={...schedule,coverage:'all_machines' as const};
  for(const machine of selected)if(!machine||!canManageMachine(actor,machine,users)||!machineInSeason(machine,base,users)||!same(machine.state||userSeasonLocation(users.find(user=>user.uid===(machine.cfId||machine.currentHolderId))||actor,users).state,schedule.state)||!same(machine.district||userSeasonLocation(users.find(user=>user.uid===(machine.cfId||machine.currentHolderId))||actor,users).district,schedule.district))throw new Error('Select machines within this state, district and your reporting scope.');
  const recipients=new Set<string>([actor.uid]);
  for(const machine of selected){const cfId=machine!.cfId||machine!.currentHolderId;for(const user of reportingAncestors(users,cfId))recipients.add(user.uid);for(const user of users)if(user.role==='jcf'&&user.parentId===cfId)recipients.add(user.uid);}
- return {coverage:'selected_machines' as const,machineIds:ids,recipientIds:[...recipients]};
+ return {coverage:schedule.coverage,machineIds:schedule.coverage==='machine_types'?[]:ids,machineTypes:schedule.coverage==='machine_types'?[...new Set(schedule.machineTypes)]:[],recipientIds:[...recipients]};
 }
 async function syncRecipients(schedule:SeasonSchedule,users:UserProfile[]){const allowed=new Set(seasonRecipients(schedule,users).map(user=>user.uid));const notes=await getDocs(collection(db,'notifications'));const commit=writeBatch(db);let changed=false;for(const note of notes.docs)if(note.data().scheduleId===schedule.id){commit.update(note.ref,{cancelled:!!schedule.archived||!allowed.has(note.data().userId)});changed=true;}if(changed)await commit.commit();}
 export async function createSeasonSchedule(actor:UserProfile,details:Omit<SeasonSchedule,'id'|'ownerId'|'createdAt'>){
@@ -58,7 +60,7 @@ export async function createSeasonSchedule(actor:UserProfile,details:Omit<Season
  Object.assign(schedule,await targetMachines(actor,schedule,users));
  const commit=writeBatch(db);commit.set(doc(db,'season_schedules',id),schedule);await commit.commit();await dispatchSeasonAlerts();return schedule;
 }
-export async function updateSeasonSchedule(actor:UserProfile,id:string,details:Pick<SeasonSchedule,'name'|'seasonStart'|'seasonEnd'|'preAlertDate'|'postAlertDate'> & Pick<Partial<SeasonSchedule>,'coverage'|'machineIds'>){
+export async function updateSeasonSchedule(actor:UserProfile,id:string,details:Pick<SeasonSchedule,'name'|'seasonStart'|'seasonEnd'|'preAlertDate'|'postAlertDate'> & Pick<Partial<SeasonSchedule>,'coverage'|'machineIds'|'machineTypes'>){
  if(isRemoteBrowser)return remoteCommand('updateSeasonSchedule',[id,details]);
  await verify(actor);const snapshot=await getDoc(doc(db,'season_schedules',id));
  if(!snapshot.exists())throw new Error('Season schedule not found.');
@@ -66,7 +68,7 @@ export async function updateSeasonSchedule(actor:UserProfile,id:string,details:P
  if(!canManageSeason(actor,schedule))throw new Error('Only Admin, Farm Mechanization or the owning District Manager can manage this schedule.');
  if(schedule.archived)throw new Error('Restore this schedule before editing it.');
  if(!details.name.trim()||![details.seasonStart,details.seasonEnd,details.preAlertDate,details.postAlertDate].every(validDate)||details.preAlertDate>details.seasonStart||details.seasonEnd<details.seasonStart||details.postAlertDate<details.seasonEnd)throw new Error('Enter a season name and valid season / reminder dates.');
- const users=await profiles();const updated={...schedule,name:details.name.trim(),seasonStart:details.seasonStart,seasonEnd:details.seasonEnd,preAlertDate:details.preAlertDate,postAlertDate:details.postAlertDate,coverage:details.coverage??schedule.coverage,machineIds:details.machineIds??schedule.machineIds,updatedAt:new Date().toISOString()};Object.assign(updated,await targetMachines(actor,updated,users));
+ const users=await profiles();const updated={...schedule,name:details.name.trim(),seasonStart:details.seasonStart,seasonEnd:details.seasonEnd,preAlertDate:details.preAlertDate,postAlertDate:details.postAlertDate,coverage:details.coverage??schedule.coverage,machineIds:details.machineIds??schedule.machineIds,machineTypes:details.machineTypes??schedule.machineTypes,updatedAt:new Date().toISOString()};Object.assign(updated,await targetMachines(actor,updated,users));
  const commit=writeBatch(db);commit.set(doc(db,'season_schedules',id),updated);await commit.commit();await syncRecipients(updated,users);await dispatchSeasonAlerts();return updated;
 }
 export async function archiveSeasonSchedule(actor:UserProfile,id:string,archived:boolean){
@@ -89,7 +91,7 @@ async function dispatch(now:Date){
   for(const phase of ['pre','post'] as const){if((phase==='pre'?schedule.preAlertDate:schedule.postAlertDate)>day(now))continue;
    for(const user of seasonRecipients(schedule,users)){
     const id=`season-${schedule.id}-${phase}-${user.uid}`;if((await getDoc(doc(db,'notifications',id))).exists())continue;
-    commit.set(doc(db,'notifications',id),{userId:user.uid,title:`${phase==='pre'?'Pre':'Post'}-season inspection due`,message:`${schedule.name}${schedule.coverage==='selected_machines'?' · '+schedule.machineIds!.length+' selected machine(s)':''} · ${schedule.state ? schedule.state + ' / ' : ''}${schedule.district}: ${['cf','jcf','area_manager','district_manager'].includes(user.role) ? 'scan your assigned machines and submit the ' + (phase==='pre'?'readiness':'cleaning, lubrication and secure storage') + ' checklist with pictures.' : 'seasonal inspections are due. Track field-team reports and maintenance escalations.'}`,type:'info',read:false,timestamp:now.toISOString(),page:'seasons',scheduleId:schedule.id,phase});count++;
+    commit.set(doc(db,'notifications',id),{userId:user.uid,title:`${phase==='pre'?'Pre':'Post'}-season inspection due`,message:`${schedule.name}${schedule.coverage==='machine_types'?' · '+schedule.machineTypes!.join(', '):''}${schedule.coverage==='selected_machines'?' · '+schedule.machineIds!.length+' selected machine(s)':''} · ${schedule.state ? schedule.state + ' / ' : ''}${schedule.district}: ${['cf','jcf','area_manager','district_manager'].includes(user.role) ? 'scan your assigned machines and submit the ' + (phase==='pre'?'readiness':'cleaning, lubrication and secure storage') + ' checklist with pictures.' : 'seasonal inspections are due. Track field-team reports and maintenance escalations.'}`,type:'info',read:false,timestamp:now.toISOString(),page:'seasons',scheduleId:schedule.id,phase});count++;
    }
   }
  }

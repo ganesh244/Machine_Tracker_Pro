@@ -55,3 +55,21 @@ const targetedNotes=()=>data.getDocs(data.collection(db,'notifications')).then(s
 assert.ok((await targetedNotes()).find(note=>note.userId==='sangareddy-cf').cancelled);assert.ok(!(await targetedNotes()).find(note=>note.userId===siblingCF.uid).cancelled);
 await api.archiveSeasonSchedule(boss,targeted.id,true);await api.archiveSeasonSchedule(boss,targeted.id,false);assert.ok((await targetedNotes()).find(note=>note.userId==='sangareddy-cf').cancelled,'restore must not reactivate excluded recipients');
 console.log('Machine targeting passed: scope validation, selected-only checks, responsible team recipients, excluded machine rejection, retargeting and archive/restore.');
+
+const mcp={...machine,machineType:'MCP'};
+const drum={...siblingMachine,machineType:'Drum seeder'};
+const laser={...unselected,machineType:'Laser land leveller'};
+for(const item of [mcp,drum,laser])await data.setDoc(data.doc(db,'planters',item.id),item);
+await assert.rejects(api.createSeasonSchedule(boss,{...details,coverage:'machine_types',machineTypes:[]}));
+await assert.rejects(api.createSeasonSchedule(boss,{...details,coverage:'machine_types',machineTypes:['Unknown']}));
+const typed=await api.createSeasonSchedule(boss,{...details,name:'MCP seasonal check',coverage:'machine_types',machineTypes:['MCP'],recipientIds:[siblingCF.uid]});
+assert.ok(api.machineInSeason(mcp,typed,targetedUsers));
+assert.ok(!api.machineInSeason(drum,typed,targetedUsers));assert.ok(!api.machineInSeason(laser,typed,targetedUsers));
+assert.ok(api.canSeeSeason(extra[4],typed,targetedUsers));assert.ok(!api.canSeeSeason(siblingCF,typed,targetedUsers),'unrelated machine-type CF excluded');
+await assert.rejects(api.saveSeasonInspection(extra[4],{...inspection,scheduleId:typed.id,machineId:laser.id,scannedQRId:laser.id}));
+await api.saveSeasonInspection(extra[4],{...inspection,scheduleId:typed.id});
+const changedType=await api.updateSeasonSchedule(boss,typed.id,{...details,coverage:'machine_types',machineTypes:['Drum seeder']});
+assert.ok(api.machineInSeason(drum,changedType,targetedUsers));assert.ok(!api.machineInSeason(mcp,changedType,targetedUsers));
+const typeNotes=(await data.getDocs(data.collection(db,'notifications'))).docs.map(row=>row.data()).filter(row=>row.scheduleId===typed.id);
+assert.ok(typeNotes.find(note=>note.userId===extra[4].uid).cancelled);assert.ok(!typeNotes.find(note=>note.userId===siblingCF.uid).cancelled);
+console.log('Machine-type alerts passed: MCP-only recipients and inspections, drum/laser exclusion, type validation and edit retargeting.');
