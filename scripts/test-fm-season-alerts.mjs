@@ -38,3 +38,20 @@ const nizamabad=await api.createSeasonSchedule(boss,{...details,district:'Nizama
 console.log('FM geographic alerts passed: state/district selection; CF/JCF, Area/District/State and oversight recipients; missing-District branch; no cross-state/district leakage; pre/post dates, catch-up/dedup/read preservation; scoped JCF inspection.');
 
 const presetOnly=await api.createSeasonSchedule(boss,{...details,state:"Andhra Pradesh",district:"Polavaram",name:"Preset district without field records"});assert.equal(presetOnly.district,"Polavaram");
+
+const siblingCF={...extra[4],uid:'sibling-cf',displayName:'Unselected CF'};await save(siblingCF);const targetedUsers=[...users,siblingCF];
+const unselected={...machine,id:'SG-UNSELECTED'};const siblingMachine={...machine,id:'SG-SIBLING',cfId:siblingCF.uid,currentHolderId:siblingCF.uid};
+for(const item of [unselected,siblingMachine])await data.setDoc(data.doc(db,'planters',item.id),item);
+await assert.rejects(api.createSeasonSchedule(boss,{...details,coverage:'selected_machines',machineIds:[]}));
+await assert.rejects(api.createSeasonSchedule(boss,{...details,coverage:'selected_machines',machineIds:['missing-machine']}));
+await assert.rejects(api.createSeasonSchedule(boss,{...details,district:'Nizamabad',coverage:'selected_machines',machineIds:[machine.id]}));
+const targeted=await api.createSeasonSchedule(boss,{...details,name:'Only selected machine',coverage:'selected_machines',machineIds:[machine.id]});
+assert.ok(api.machineInSeason(machine,targeted,targetedUsers));assert.ok(!api.machineInSeason(unselected,targeted,targetedUsers));assert.ok(!api.canSeeSeason(siblingCF,targeted,targetedUsers));
+const targetRecipients=api.seasonRecipients(targeted,targetedUsers).map(user=>user.uid);assert.ok(targetRecipients.includes('sangareddy-cf')&&targetRecipients.includes('sangareddy-jcf')&&targetRecipients.includes(state.uid));assert.ok(!targetRecipients.includes(siblingCF.uid));
+await assert.rejects(api.saveSeasonInspection(extra[4],{...inspection,scheduleId:targeted.id,machineId:unselected.id,scannedQRId:unselected.id}));
+const changed=await api.updateSeasonSchedule(boss,targeted.id,{...details,name:'Retargeted',coverage:'selected_machines',machineIds:[siblingMachine.id]});
+assert.deepEqual(changed.machineIds,[siblingMachine.id]);
+const targetedNotes=()=>data.getDocs(data.collection(db,'notifications')).then(snapshot=>snapshot.docs.filter(row=>row.data().scheduleId===targeted.id).map(row=>row.data()));
+assert.ok((await targetedNotes()).find(note=>note.userId==='sangareddy-cf').cancelled);assert.ok(!(await targetedNotes()).find(note=>note.userId===siblingCF.uid).cancelled);
+await api.archiveSeasonSchedule(boss,targeted.id,true);await api.archiveSeasonSchedule(boss,targeted.id,false);assert.ok((await targetedNotes()).find(note=>note.userId==='sangareddy-cf').cancelled,'restore must not reactivate excluded recipients');
+console.log('Machine targeting passed: scope validation, selected-only checks, responsible team recipients, excluded machine rejection, retargeting and archive/restore.');

@@ -61,6 +61,12 @@ try{
  const schedule=await command('createSeasonSchedule',[scheduleDetails],cookie);assert.equal(schedule.state,'Telangana');
  const changedSeason=await command('updateSeasonSchedule',[schedule.id,{...scheduleDetails,name:'Updated season'}],cookie);assert.equal(changedSeason.name,'Updated season');await command('archiveSeasonSchedule',[schedule.id,true],cookie);
  console.log('Light seasonal schedule create/update/archive passed without loading machine photos.');
+ const savedMachine=(await db.collection('documents').findOne({path:'planters/'+machine.id}))?.value;
+ const machineSchedule=await command('createSeasonSchedule',[{...scheduleDetails,name:'One machine',coverage:'selected_machines',machineIds:[machine.id],recipientIds:[otherCF.uid]}],cookie);
+ assert.deepEqual(machineSchedule.machineIds,[machine.id]);assert.ok(machineSchedule.recipientIds.includes(cf.uid));assert.ok(!machineSchedule.recipientIds.includes(otherCF.uid),'client cannot forge recipients');
+ assert.deepEqual((await db.collection('documents').findOne({path:'planters/'+machine.id}))?.value,savedMachine,'metadata-only schedule planning preserves machine photo data');
+ console.log('Machine-targeted season backend passed: persisted machine IDs, server-derived recipients, existing machine data preserved.');
+
  await request('logout',{},cookie);assert.equal((await request('read',{ref:{kind:'collection',path:'users'}},cookie)).status,401);
  console.log('Mongo backend passed: real replica-set transactions, bootstrap once, hashed credentials, login/logout/revocation, Admin user creation, duplicate rollback, hierarchy-scoped reads, forged-role/direct-write denial, QR distribution, machine and farmer onboarding.');
 }finally{await new Promise<void>(resolve=>server.close(()=>resolve()));await closeMongo();await replica.stop();}

@@ -26,7 +26,7 @@ export function invalidateRecords(){cachedRecords=undefined;}
 async function loadRecords(session?:ClientSession,collections?:string[]){
  const {db}=await mongo();
  const filter=collections?{path:{$regex:'^('+collections.join('|')+')/'}}:{};
- const rows=await db.collection('documents').find(filter,{session,maxTimeMS:20000}).toArray();
+ const rows=await db.collection('documents').find(filter,{session,maxTimeMS:20000,...(collections?{projection:{'value.photos':0,'value.gallery':0,'value.imageUrl':0}}:{})}).toArray();
  return Object.fromEntries(rows.map(row=>[row.path,row.value]));
 }
 export async function records(session?:ClientSession,collections?:string[]){
