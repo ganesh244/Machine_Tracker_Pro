@@ -10,10 +10,10 @@ export async function mongo(){
  const expectedHost=process.env.MONGODB_CLUSTER_HOST;
  if(process.env.NODE_ENV==='production'&&!expectedHost)throw new Error('Database connection is not configured.');
  if(expectedHost&&new URL(uri).hostname!==expectedHost)throw new Error('Database connection does not match the FarmMech cluster.');
- connection ||=new MongoClient(uri,{maxPoolSize:10,serverSelectionTimeoutMS:8000}).connect().catch(error=>{connection=undefined;throw error;});
+ connection ||=new MongoClient(uri,{maxPoolSize:10,maxConnecting:2,serverSelectionTimeoutMS:8000,connectTimeoutMS:8000,waitQueueTimeoutMS:8000,socketTimeoutMS:15000}).connect().catch(error=>{connection=undefined;throw error;});
  const client=await connection;return {client,db:client.db(process.env.MONGODB_DATABASE||'farmmech')};
 }
-export async function records(session?:ClientSession){const {db}=await mongo();const rows=await db.collection('documents').find({},{session}).toArray();return Object.fromEntries(rows.map(row=>[row.path,row.value]));}
+export async function records(session?:ClientSession){const {db}=await mongo();const rows=await db.collection('documents').find({},{session,maxTimeMS:12000}).toArray();return Object.fromEntries(rows.map(row=>[row.path,row.value]));}
 let indexed:Promise<unknown>|undefined;
 export async function ensureIndexes(){return indexed ||= (async()=>{const {db}=await mongo();await db.collection('documents').createIndex({path:1},{unique:true});await db.collection('accounts').createIndex({username:1},{unique:true});await db.collection('accounts').createIndex({uid:1},{unique:true});await db.collection('sessions').createIndex({tokenHash:1},{unique:true});await db.collection('sessions').createIndex({expiresAt:1},{expireAfterSeconds:0});await db.collection('login_limits').createIndex({expiresAt:1},{expireAfterSeconds:0});})().catch(error=>{indexed=undefined;throw error;});}
 export async function transaction<T>(operation:(session:ClientSession)=>Promise<T>){

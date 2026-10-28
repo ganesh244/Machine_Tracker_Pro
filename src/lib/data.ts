@@ -93,8 +93,31 @@ function apply(previous: any, values: any) {
 }
 const choose = (remote:any, local:any):any => isRemoteBrowser ? remote : local;
 const remoteSnapshot=(row:any)=>snapshot(row.path,row.value);
-async function remoteRead(ref:LocalRef){const response=await backendRequest('read',{ref});if(ref.kind==='doc')return remoteSnapshot(response);const docs=response.rows.map(remoteSnapshot);return {docs,size:docs.length,empty:!docs.length,forEach:(callback:any)=>docs.forEach(callback)};}
-function remoteSubscribe(ref:LocalRef,callback:any,onError?:any){let active=true;const emit=()=>{remoteRead(ref).then(result=>{if(active)(typeof callback==='function'?callback:callback.next)(result);}).catch(error=>{if(active)onError?.(error);});};emit();const timer=setInterval(emit,15000);window.addEventListener('farmmech-data-changed',emit);return()=>{active=false;clearInterval(timer);window.removeEventListener('farmmech-data-changed',emit);};}
+const pendingReads=new Map<string,Promise<any>>();
+let readQueue:{ref:LocalRef;resolve:(value:any)=>void;reject:(error:any)=>void}[]=[];
+let readTimer:ReturnType<typeof setTimeout>|undefined;
+function remoteRead(ref:LocalRef):Promise<any>{
+ const key=JSON.stringify(ref);const pending=pendingReads.get(key);if(pending)return pending;
+ const promise=new Promise<any>((resolve,reject)=>{
+  readQueue.push({ref,resolve,reject});
+  if(!readTimer)readTimer=setTimeout(()=>{readTimer=undefined;const queue=readQueue;readQueue=[];
+   void backendRequest('readMany',{refs:queue.map(item=>item.ref)}).then(response=>{
+    if(!Array.isArray(response.results)||response.results.length!==queue.length)throw new Error('Incomplete backend response. Please retry.');
+    queue.forEach((item,index)=>{const row=response.results[index];if(item.ref.kind==='doc')item.resolve(remoteSnapshot(row));else{const docs=row.rows.map(remoteSnapshot);item.resolve({docs,size:docs.length,empty:!docs.length,forEach:(callback:any)=>docs.forEach(callback)});}});
+   }).catch(error=>queue.forEach(item=>item.reject(error)));
+  },10);
+ }).finally(()=>pendingReads.delete(key));pendingReads.set(key,promise);return promise;
+}
+function remoteSubscribe(ref:LocalRef,callback:any,onError?:any){
+ let active=true,running=false,refreshPending=false,failures=0;let timer:ReturnType<typeof setTimeout>|undefined;
+ const emit=async()=>{
+  if(!active)return;if(running){refreshPending=true;return;}if(timer)clearTimeout(timer);
+  running=true;try{const result=await remoteRead(ref);failures=0;if(active)(typeof callback==='function'?callback:callback.next)(result);}catch(error){failures++;if(active)onError?.(error);}finally{running=false;if(active){const delay=refreshPending?100:Math.min(60000,15000*2**Math.min(failures,2));refreshPending=false;timer=setTimeout(()=>{if(typeof document!=='undefined'&&document.hidden){timer=setTimeout(emit,15000);return;}void emit();},delay);}}
+ };
+ const refresh=()=>{void emit();};void emit();window.addEventListener('farmmech-data-changed',refresh);
+ return()=>{active=false;if(timer)clearTimeout(timer);window.removeEventListener('farmmech-data-changed',refresh);};
+}
+
 const denied=async()=>{throw new Error('Direct writes are disabled. Use an authorised workflow.');};
 const remoteApi:any={collection:(parent:any,...parts:string[])=>reference('collection',parent,...parts),doc:(parent:any,...parts:string[])=>reference('doc',parent,...parts),query:(ref:LocalRef,...constraints:any[])=>({...ref,constraints}),where:(...args:any[])=>({type:'where',args}),orderBy:(...args:any[])=>({type:'orderBy',args}),limit:(...args:any[])=>({type:'limit',args}),getDoc:remoteRead,getDocs:remoteRead,onSnapshot:remoteSubscribe,setDoc:denied,addDoc:denied,deleteDoc:denied,updateDoc:async(ref:LocalRef,value:any)=>{await backendRequest('notificationRead',{path:ref.path,value});window.dispatchEvent(new Event('farmmech-data-changed'));},arrayUnion:(...value:any[])=>({__local:'arrayUnion',value}),increment:(value:number)=>({__local:'increment',value}),writeBatch:()=>({set:denied,update:denied,delete:denied,commit:denied})};
 export const collection = choose(remoteApi.collection, (parent: any, ...parts: string[]) => reference('collection', parent, ...parts));

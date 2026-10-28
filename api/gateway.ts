@@ -36,9 +36,13 @@ export default async function handler(req:any,res:any){
   }
   if(action==='logout'){await logout(req);res.setHeader('Set-Cookie',cookie('',0));return res.json({ok:true});}
   const actor=await currentUser(req);if(!actor)return res.status(401).json({error:'Sign in to continue.'});
-  if(action==='read'){
-   const ref=validateRef(body.ref),visible=visibleRecords(actor,await records());
-   return context.run({records:visible,changed:new Set()},async()=>{if(ref.kind==='doc'){const row=await getDoc(ref);return res.json({path:ref.path,value:row.data()});}const result=await getDocs(ref);return res.json({rows:result.docs.map((row:any)=>({path:row.ref.path,value:row.data()}))});});
+  if(action==='read'||action==='readMany'){
+   if(action==='readMany'&&(!Array.isArray(body.refs)||!body.refs.length||body.refs.length>50))throw new Error('Choose between 1 and 50 record references.');
+   const refs=(action==='readMany'?body.refs:[body.ref]).map(validateRef),visible=visibleRecords(actor,await records());
+   return context.run({records:visible,changed:new Set()},async()=>{
+    const results=await Promise.all(refs.map(async(ref:any)=>{if(ref.kind==='doc'){const row=await getDoc(ref);return {path:ref.path,value:row.data()};}const result=await getDocs(ref);return {rows:result.docs.map((row:any)=>({path:row.ref.path,value:row.data()}))};}));
+    return res.json(action==='readMany'?{results}:results[0]);
+   });
   }
   if(action==='username'){
    if(actor.role!=='admin')return res.status(403).json({error:'Only Admin can change usernames.'});
@@ -83,6 +87,7 @@ export default async function handler(req:any,res:any){
   }
   return res.status(404).json({error:'Unknown request.'});
  }catch(error:any){
+  console.error('FarmMech API request failed',{name:error?.name||'Error',code:error?.code,action:String(req.query?.action||'')});
   if(error?.code===11000)return res.status(409).json({error:'This username or record already exists. Reload and try again.'});
   if(error?.name?.includes('Mongo')||String(error?.message).includes('Database connection'))return res.status(503).json({error:'Database unavailable. Ask Admin to check the MongoDB connection.'});
   return res.status(error?.status||400).json({error:error instanceof Error?error.message:'The request could not be completed.'});

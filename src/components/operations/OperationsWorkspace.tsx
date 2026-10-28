@@ -59,7 +59,7 @@ export function OperationsWorkspace({ onOpenTools, sessionUser, onSignOut }: { o
   const [nameTarget,setNameTarget]=useState<UserProfile|null>(null);
   const [notice, setNotice] = useState(''), [error, setError] = useState(''), [busy, setBusy] = useState(false), [printIds, setPrintIds] = useState<string[]>([]);
   useEffect(() => { ensureDemoScenarios().catch(err => setError('Demo samples could not load: ' + err.message)); }, []);
-  useEffect(() => { const dispatch = () => { dispatchSeasonAlerts().catch(err => setError('Season alerts: ' + err.message)); }; dispatch(); const timer = window.setInterval(dispatch, 60000); window.addEventListener('focus', dispatch); return () => { clearInterval(timer); window.removeEventListener('focus', dispatch); }; }, []);
+  useEffect(() => { const dispatch = () => { dispatchSeasonAlerts().then(()=>setError(previous=>previous.startsWith('Season alerts: ')?'':previous)).catch(err => setError('Season alerts: ' + err.message)); }; dispatch(); const timer = window.setInterval(dispatch, 60000); window.addEventListener('focus', dispatch); return () => { clearInterval(timer); window.removeEventListener('focus', dispatch); }; }, []);
   const actor = isLocalDemo ? users.find(user => user.uid === actorId) : users.find(user=>user.uid===sessionUser?.uid)||sessionUser;
   useEffect(() => { if (page !== 'maintenance') setMaintenanceMachineId(''); }, [page]);
   useEffect(() => { window.scrollTo({ top: 0, behavior: 'instant' }); }, [page, batchFilter]);

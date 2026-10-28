@@ -1,0 +1,14 @@
+import assert from 'node:assert/strict';
+import {build} from 'esbuild';
+globalThis.window=new EventTarget();
+let calls=[];let release;
+globalThis.__readBackend=async(action,body)=>{calls.push({action,body});await new Promise(resolve=>{release=resolve;});return {results:body.refs.map(ref=>ref.kind==='doc'?{path:ref.path,value:{id:'one'}}:{rows:[{path:ref.path+'/one',value:{id:'one'}}]})};};
+const bundled=await build({stdin:{contents:"export * from './src/lib/data';",resolveDir:process.cwd(),loader:'ts'},bundle:true,write:false,format:'esm',platform:'browser',define:{'import.meta.env':JSON.stringify({DEV:false,VITE_LOCAL_DEMO:'false'})},plugins:[{name:'mock-backend',setup(build){build.onResolve({filter:/backendClient/},()=>({path:'backend',namespace:'test'}));build.onLoad({filter:/.*/,namespace:'test'},()=>({contents:'export const isRemoteBrowser=true;export const backendRequest=(...args)=>globalThis.__readBackend(...args);',loader:'js'}));}}]});
+const api=await import(`data:text/javascript;base64,${Buffer.from(bundled.outputFiles[0].text).toString('base64')}`);
+const users=api.collection({},'users'),machines=api.collection({},'planters');
+const reads=[api.getDocs(users),api.getDocs(machines),api.getDocs(users)];
+await new Promise(resolve=>setTimeout(resolve,30));assert.equal(calls.length,1);assert.equal(calls[0].action,'readMany');assert.equal(calls[0].body.refs.length,2);release();const results=await Promise.all(reads);assert.equal(results[0].size,1);assert.equal(results[1].docs[0].id,'one');
+calls=[];let updates=0;const unsubscribe=api.onSnapshot(users,()=>updates++);await new Promise(resolve=>setTimeout(resolve,30));assert.equal(calls.length,1);
+for(let i=0;i<20;i++)window.dispatchEvent(new Event('farmmech-data-changed'));
+await new Promise(resolve=>setTimeout(resolve,30));assert.equal(calls.length,1,'in-flight subscription must not overlap');unsubscribe();release();await new Promise(resolve=>setTimeout(resolve,10));assert.equal(updates,0,'unsubscribed callback must not fire');
+console.log('Read batching passed: concurrent collections use one request, duplicate refs deduplicate, snapshot compatibility, no overlapping refreshes, cleanup.');

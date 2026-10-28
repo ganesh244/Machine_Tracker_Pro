@@ -35,6 +35,9 @@ try{
  const fmCookie=(await request('login',{username:'fm-boss',password})).cookie;const fmFarmers=await request('read',{ref:{kind:'collection',path:'farmers'}},fmCookie);assert.equal(fmFarmers.body.rows.length,1,'FM sees farmers outside its descendants without assigned geography');
  const otherCookie=(await request('login',{username:'cf-two',password})).cookie;
  const deniedRead=await request('read',{ref:{kind:'collection',path:'farmers'}},otherCookie);assert.equal(deniedRead.body.rows.length,0);
+ const multi=await request('readMany',{refs:[{kind:'collection',path:'users'},{kind:'collection',path:'farmers'},{kind:'collection',path:'accounts'}]},otherCookie);assert.equal(multi.status,200);assert.equal(multi.body.results.length,3);assert.equal(multi.body.results[1].rows.length,0);assert.equal(multi.body.results[2].rows.length,0);
+ assert.equal((await request('readMany',{refs:[]} ,cookie)).status,400);
+ assert.equal((await request('readMany',{refs:[{kind:'collection',path:'users'}]})).status,401);
  const deniedDirect=await request('read',{ref:{kind:'doc',path:'farmers/'+farmer.id}},otherCookie);assert.equal(deniedDirect.body.value,undefined);
  const deniedWrite=await request('notificationRead',{path:'users/'+cf.uid,value:{role:'admin'}},cfLogin.cookie);assert.equal(deniedWrite.status,403);
  const accountsRead=await request('read',{ref:{kind:'collection',path:'accounts'}},cookie);assert.equal(accountsRead.body.rows.length,0);

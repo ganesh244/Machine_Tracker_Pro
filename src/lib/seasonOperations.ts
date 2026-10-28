@@ -68,7 +68,7 @@ export async function archiveSeasonSchedule(actor:UserProfile,id:string,archived
  await commit.commit();if(!archived)await dispatchSeasonAlerts();
 }
 let dispatching:Promise<void>|undefined;
-export function dispatchSeasonAlerts(now=new Date()){if(isRemoteBrowser)return remoteCommand('dispatchSeasonAlerts');if(typeof window==='undefined')return dispatch(now);return dispatching ||=dispatch(now).finally(()=>{dispatching=undefined;});}
+export function dispatchSeasonAlerts(now=new Date()){if(isRemoteBrowser)return dispatching ||=remoteCommand('dispatchSeasonAlerts').finally(()=>{dispatching=undefined;});if(typeof window==='undefined')return dispatch(now);return dispatching ||=dispatch(now).finally(()=>{dispatching=undefined;});}
 async function dispatch(now:Date){
  const [users,schedules]=await Promise.all([profiles(),getDocs(collection(db,'season_schedules'))]);const commit=writeBatch(db);let count=0;
  for(const snapshot of schedules.docs){const schedule=snapshot.data() as SeasonSchedule;if(schedule.archived)continue;
