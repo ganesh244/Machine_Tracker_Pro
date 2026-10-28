@@ -12,3 +12,10 @@ calls=[];let updates=0;const unsubscribe=api.onSnapshot(users,()=>updates++);awa
 for(let i=0;i<20;i++)window.dispatchEvent(new Event('farmmech-data-changed'));window.dispatchEvent(new Event('focus'));window.dispatchEvent(new Event('online'));
 await new Promise(resolve=>setTimeout(resolve,30));assert.equal(calls.length,1,'in-flight subscription must not overlap');unsubscribe();release();await new Promise(resolve=>setTimeout(resolve,10));assert.equal(updates,0,'unsubscribed callback must not fire');
 console.log('Read batching passed: concurrent collections use one request, duplicate refs deduplicate, snapshot compatibility, no overlapping refreshes, cleanup.');
+
+let failures=0,recovered=0;let failOnce=true;
+globalThis.__readBackend=async(action,body)=>{if(failOnce){failOnce=false;throw new Error('Temporary connection failure');}return {results:body.refs.map(ref=>({rows:[{path:ref.path+'/recovered',value:{id:'recovered'}}]}))};};
+const stopRecovery=api.onSnapshot(users,()=>recovered++,()=>failures++);
+await new Promise(resolve=>setTimeout(resolve,30));assert.equal(failures,1);
+window.dispatchEvent(new Event('online'));await new Promise(resolve=>setTimeout(resolve,30));assert.equal(recovered,1,'online event retries immediately after failure');stopRecovery();
+console.log('Recovery passed: temporary failure is reported and online event restores the subscription.');
