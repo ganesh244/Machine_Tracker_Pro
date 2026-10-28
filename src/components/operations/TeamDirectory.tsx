@@ -4,7 +4,7 @@ import type { UserProfile } from '../../types';
 import { ROLE_NAMES } from '../../lib/fieldOperations';
 import './team-directory.css';
 
-export function TeamDirectory({ users, canEdit, machineCount, onEdit, onReset }: { key?: string; users: UserProfile[]; canEdit: boolean; machineCount: (user: UserProfile) => number; onEdit: (user: UserProfile) => void; onReset: (user: UserProfile) => void }) {
+export function TeamDirectory({ users, canEdit, machineCount, onEdit, onUsername, onReset }: { key?: string; users: UserProfile[]; canEdit: boolean; machineCount: (user: UserProfile) => number; onEdit: (user: UserProfile) => void; onUsername: (user: UserProfile) => void; onReset: (user: UserProfile) => void }) {
  const [selectedId,setSelectedId]=useState(''),[query,setQuery]=useState('');
  const selected=users.find(user=>user.uid===selectedId);
  const children=(id:string)=>users.filter(user=>user.parentId===id&&user.uid!==id);
@@ -15,7 +15,7 @@ export function TeamDirectory({ users, canEdit, machineCount, onEdit, onReset }:
  while(cursor&&!seen.has(cursor.uid)){seen.add(cursor.uid);ancestors.unshift(cursor);const parent=users.find(user=>user.uid===cursor?.parentId);cursor=parent?.role==='admin'?undefined:parent;}
  const open=(user:UserProfile)=>{setSelectedId(user.uid);setQuery('');};
  const location=(user:UserProfile)=>[user.assignedArea,user.assignedDistrict,user.assignedState].filter(Boolean).join(' · ')||'Organization-wide';
- const accountActions=(user:UserProfile)=>canEdit&&<div className="td-account"><button className="fo-text-button" onClick={()=>onEdit(user)}>Edit name</button><button className="fo-text-button" onClick={()=>onReset(user)}>Reset password</button></div>;
+ const accountActions=(user:UserProfile)=>canEdit&&<div className="td-account"><button className="fo-text-button" onClick={()=>onEdit(user)}>Edit name</button><button className="fo-text-button" onClick={()=>onUsername(user)}>Edit username</button><button className="fo-text-button" onClick={()=>onReset(user)}>Reset password</button></div>;
  return <div className="td-directory">
   <div className="td-toolbar"><label className="td-search"><Search size={18}/><input aria-label="Search team members" type="search" placeholder="Search name, username, role or area…" value={query} onChange={event=>setQuery(event.target.value)}/></label><span>{users.length} team members</span></div>
   <nav className="td-breadcrumbs" aria-label="Team hierarchy"><button onClick={()=>{setSelectedId('');setQuery('');}}>Team directory</button>{ancestors.map(user=><React.Fragment key={user.uid}><ChevronRight size={14}/><button aria-current={user.uid===selected?.uid?'page':undefined} onClick={()=>open(user)}>{user.displayName}</button></React.Fragment>)}</nav>

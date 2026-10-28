@@ -39,6 +39,18 @@ try{
  const deniedWrite=await request('notificationRead',{path:'users/'+cf.uid,value:{role:'admin'}},cfLogin.cookie);assert.equal(deniedWrite.status,403);
  const accountsRead=await request('read',{ref:{kind:'collection',path:'accounts'}},cookie);assert.equal(accountsRead.body.rows.length,0);
  const {db}=await mongo();const stored=await db.collection('accounts').findOne({username:'owner'});assert.ok(stored?.passwordHash.startsWith('scrypt:'));assert.ok(!JSON.stringify(await request('export',{},cookie)).includes(password));
+ const beforeRename=await db.collection('accounts').findOne({uid:otherCF.uid});
+ assert.equal((await request('username',{uid:otherCF.uid,username:'renamed-cf'},cfLogin.cookie)).status,403);
+ assert.equal((await request('username',{uid:otherCF.uid,username:'x'},cookie)).status,400);
+ assert.equal((await request('username',{uid:otherCF.uid,username:'cf-one'},cookie)).status,409);
+ assert.equal((await db.collection('accounts').findOne({uid:otherCF.uid}))?.username,'cf-two');
+ const renamed=await request('username',{uid:otherCF.uid,username:'renamed-cf'},cookie);assert.equal(renamed.status,200,JSON.stringify(renamed.body));
+ assert.deepEqual(renamed.body.user,{...otherCF,username:'renamed-cf'});
+ assert.equal((await db.collection('accounts').findOne({uid:otherCF.uid}))?.passwordHash,beforeRename?.passwordHash);
+ assert.equal((await db.collection('documents').findOne({path:'publicProfiles/'+otherCF.uid}))?.value.username,'renamed-cf');
+ assert.equal((await request('login',{username:'cf-two',password})).status,401);
+ assert.equal((await request('login',{username:'renamed-cf',password})).status,200);
+ console.log('Username correction passed: Admin-only, uniqueness rollback, profile sync, same password, UID and reporting links, new login works.');
  const reset=await request('password',{uid:cf.uid,password:'Updated-test-password-2026'},cookie);assert.equal(reset.status,200);assert.equal((await request('read',{ref:{kind:'collection',path:'users'}},cfLogin.cookie)).status,401);assert.equal((await request('login',{username:'cf-one',password})).status,401);assert.equal((await request('login',{username:'cf-one',password:'Updated-test-password-2026'})).status,200);
  await request('logout',{},cookie);assert.equal((await request('read',{ref:{kind:'collection',path:'users'}},cookie)).status,401);
  console.log('Mongo backend passed: real replica-set transactions, bootstrap once, hashed credentials, login/logout/revocation, Admin user creation, duplicate rollback, hierarchy-scoped reads, forged-role/direct-write denial, QR distribution, machine and farmer onboarding.');

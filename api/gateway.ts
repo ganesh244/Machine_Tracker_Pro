@@ -5,7 +5,7 @@ import * as field from '../src/lib/fieldOperations.js';
 import * as maintenance from '../src/lib/maintenance.js';
 import * as seasons from '../src/lib/seasonOperations.js';
 import { createTeamUser, updateTeamUserName } from '../src/lib/teamManagement.js';
-import { getDoc, getDocs } from '../src/lib/data.js';
+import { getDoc, getDocs, doc, setDoc } from '../src/lib/data.js';
 
 const commands:Record<string,Function>={updateTeamUserName,createQRBatch:field.createQRBatch,addBatchStickers:field.addBatchStickers,distributeQRLabels:field.distributeQRLabels,onboardFieldMachine:field.onboardFieldMachine,onboardLeadFarmer:field.onboardLeadFarmer,recordFarmerUsage:field.recordFarmerUsage,assignResponsibleCF:field.assignResponsibleCF,raiseMaintenance:maintenance.raiseMaintenance,reviewMaintenance:maintenance.reviewMaintenance,startMaintenance:maintenance.startMaintenance,completeMaintenance:maintenance.completeMaintenance,reviewServiceLog:maintenance.reviewServiceLog,createSeasonSchedule:seasons.createSeasonSchedule,updateSeasonSchedule:seasons.updateSeasonSchedule,archiveSeasonSchedule:seasons.archiveSeasonSchedule,saveSeasonInspection:seasons.saveSeasonInspection};
 function safeInput(value:any,depth=0){if(depth>12)throw new Error('Invalid request.');if(typeof value==='string'&&value.length>1500000)throw new Error('An uploaded photo or text is too large.');if(Array.isArray(value)){if(value.length>500)throw new Error('Too many items.');value.forEach(item=>safeInput(item,depth+1));}else if(value&&typeof value==='object'){for(const [key,item] of Object.entries(value)){if(['__proto__','constructor','prototype','__local'].includes(key)||key.startsWith('$')||key.includes('.'))throw new Error('Invalid request field.');safeInput(item,depth+1);}}}
@@ -39,6 +39,22 @@ export default async function handler(req:any,res:any){
   if(action==='read'){
    const ref=validateRef(body.ref),visible=visibleRecords(actor,await records());
    return context.run({records:visible,changed:new Set()},async()=>{if(ref.kind==='doc'){const row=await getDoc(ref);return res.json({path:ref.path,value:row.data()});}const result=await getDocs(ref);return res.json({rows:result.docs.map((row:any)=>({path:row.ref.path,value:row.data()}))});});
+  }
+  if(action==='username'){
+   if(actor.role!=='admin')return res.status(403).json({error:'Only Admin can change usernames.'});
+   const uid=typeof body.uid==='string'?body.uid:'';
+   const username=typeof body.username==='string'?body.username.trim().toLowerCase():'';
+   if(!/^[a-z0-9][a-z0-9._-]{2,49}$/.test(username))throw new Error('Use a username of 3–50 letters/numbers, dots, underscores or hyphens.');
+   const user=await transaction(async session=>{
+    const store=context.getStore()!;if(store.records['users/'+actor.uid]?.role!=='admin')throw new Error('Admin access required.');
+    const profile=store.records['users/'+uid];const account=await db.collection('accounts').findOne({uid},{session});
+    if(!profile||!account)throw new Error('Account not found.');
+    const updated={...profile,username};
+    await db.collection('accounts').updateOne({uid},{$set:{username}},{session});
+    await setDoc(doc({},'users',uid),updated);await setDoc(doc({},'publicProfiles',uid),updated);
+    await setDoc(doc({},'team_audit',crypto.randomUUID()),{action:'Username corrected',userId:uid,previousUsername:account.username,username,createdBy:actor.uid,timestamp:new Date().toISOString()});
+    return updated;
+   });return res.json({user});
   }
   if(action==='password'){
    const target=typeof body.uid==='string'?body.uid:actor.uid;
