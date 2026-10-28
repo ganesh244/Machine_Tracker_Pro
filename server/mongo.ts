@@ -1,3 +1,4 @@
+import { attachDatabasePool } from '@vercel/functions';
 import { MongoClient, type ClientSession } from 'mongodb';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { configureServerStore, type ServerStore } from '../src/lib/data.js';
@@ -10,7 +11,13 @@ export async function mongo(){
  const expectedHost=process.env.MONGODB_CLUSTER_HOST;
  if(process.env.NODE_ENV==='production'&&!expectedHost)throw new Error('Database connection is not configured.');
  if(expectedHost&&new URL(uri).hostname!==expectedHost)throw new Error('Database connection does not match the FarmMech cluster.');
- connection ||=new MongoClient(uri,{maxPoolSize:10,maxConnecting:2,serverSelectionTimeoutMS:8000,connectTimeoutMS:8000,waitQueueTimeoutMS:8000,socketTimeoutMS:15000}).connect().catch(error=>{connection=undefined;throw error;});
+ if(!connection){
+  const client=new MongoClient(uri,{maxPoolSize:5,minPoolSize:0,maxIdleTimeMS:5000,maxConnecting:2,serverMonitoringMode:'poll',serverSelectionTimeoutMS:8000,connectTimeoutMS:8000,waitQueueTimeoutMS:8000,socketTimeoutMS:15000});
+  // Release idle sockets before Vercel suspends the instance; polling avoids a
+  // long-lived streaming heartbeat being resumed after its deadline expired.
+  attachDatabasePool(client);
+  connection=client.connect().catch(async error=>{connection=undefined;await client.close().catch(()=>{});throw error;});
+ }
  const client=await connection;return {client,db:client.db(process.env.MONGODB_DATABASE||'farmmech')};
 }
 export async function records(session?:ClientSession){const {db}=await mongo();const rows=await db.collection('documents').find({},{session,maxTimeMS:12000}).toArray();return Object.fromEntries(rows.map(row=>[row.path,row.value]));}
