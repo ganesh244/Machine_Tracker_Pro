@@ -84,3 +84,5 @@
  .fo-select-control{display:inline-flex;align-items:center;justify-content:center;min-width:44px;min-height:44px;cursor:pointer}
  .fo-mobile-cards td[data-label]:not([data-label=""])::before{color:#627768;font-size:11px}
 }
+
+.fo-connection-error{display:flex;align-items:center;justify-content:space-between;gap:16px}.fo-connection-error p{margin:6px 0}.fo-connection-error small{font-size:12px}.fo-connection-error .fo-button{flex-shrink:0}@media(max-width:680px){.fo-connection-error{align-items:stretch;flex-direction:column}.fo-connection-error .fo-button{justify-content:center}}

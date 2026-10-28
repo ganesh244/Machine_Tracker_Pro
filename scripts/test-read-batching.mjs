@@ -9,6 +9,6 @@ const users=api.collection({},'users'),machines=api.collection({},'planters');
 const reads=[api.getDocs(users),api.getDocs(machines),api.getDocs(users)];
 await new Promise(resolve=>setTimeout(resolve,30));assert.equal(calls.length,1);assert.equal(calls[0].action,'readMany');assert.equal(calls[0].body.refs.length,2);release();const results=await Promise.all(reads);assert.equal(results[0].size,1);assert.equal(results[1].docs[0].id,'one');
 calls=[];let updates=0;const unsubscribe=api.onSnapshot(users,()=>updates++);await new Promise(resolve=>setTimeout(resolve,30));assert.equal(calls.length,1);
-for(let i=0;i<20;i++)window.dispatchEvent(new Event('farmmech-data-changed'));
+for(let i=0;i<20;i++)window.dispatchEvent(new Event('farmmech-data-changed'));window.dispatchEvent(new Event('focus'));window.dispatchEvent(new Event('online'));
 await new Promise(resolve=>setTimeout(resolve,30));assert.equal(calls.length,1,'in-flight subscription must not overlap');unsubscribe();release();await new Promise(resolve=>setTimeout(resolve,10));assert.equal(updates,0,'unsubscribed callback must not fire');
 console.log('Read batching passed: concurrent collections use one request, duplicate refs deduplicate, snapshot compatibility, no overlapping refreshes, cleanup.');

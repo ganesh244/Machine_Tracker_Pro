@@ -114,8 +114,8 @@ function remoteSubscribe(ref:LocalRef,callback:any,onError?:any){
   if(!active)return;if(running){refreshPending=true;return;}if(timer)clearTimeout(timer);
   running=true;try{const result=await remoteRead(ref);failures=0;if(active)(typeof callback==='function'?callback:callback.next)(result);}catch(error){failures++;if(active)onError?.(error);}finally{running=false;if(active){const delay=refreshPending?100:Math.min(60000,15000*2**Math.min(failures,2));refreshPending=false;timer=setTimeout(()=>{if(typeof document!=='undefined'&&document.hidden){timer=setTimeout(emit,15000);return;}void emit();},delay);}}
  };
- const refresh=()=>{void emit();};void emit();window.addEventListener('farmmech-data-changed',refresh);
- return()=>{active=false;if(timer)clearTimeout(timer);window.removeEventListener('farmmech-data-changed',refresh);};
+ const refresh=()=>{void emit();};const visible=()=>{if(typeof document==='undefined'||!document.hidden)refresh();};void emit();window.addEventListener('farmmech-data-changed',refresh);window.addEventListener('focus',visible);window.addEventListener('online',visible);if(typeof document!=='undefined')document.addEventListener('visibilitychange',visible);
+ return()=>{active=false;if(timer)clearTimeout(timer);window.removeEventListener('farmmech-data-changed',refresh);window.removeEventListener('focus',visible);window.removeEventListener('online',visible);if(typeof document!=='undefined')document.removeEventListener('visibilitychange',visible);};
 }
 
 const denied=async()=>{throw new Error('Direct writes are disabled. Use an authorised workflow.');};
