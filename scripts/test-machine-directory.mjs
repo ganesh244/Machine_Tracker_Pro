@@ -1,0 +1,15 @@
+import assert from 'node:assert/strict';
+import {build} from 'esbuild';
+const bundle=await build({stdin:{contents:"export {machineDirectoryRow} from './src/lib/machineDirectory';",resolveDir:process.cwd(),loader:'ts'},bundle:true,write:false,format:'esm',platform:'node'});
+const {machineDirectoryRow}=await import(`data:text/javascript;base64,${Buffer.from(bundle.outputFiles[0].text).toString('base64')}`);
+const users=[{uid:'state',displayName:'State',role:'state_manager',assignedState:'Telangana'},{uid:'area',displayName:'Sai',role:'area_manager',parentId:'state',assignedArea:'Kandi'},{uid:'cf',displayName:'Machendar',role:'cf',parentId:'area',assignedState:'Telangana',assignedDistrict:'Sangareddy'}];
+const machine={id:'machine',cfId:'cf',currentHolderId:'cf',machineType:'MCP',operatingStatus:'idle',leadFarmerId:'farmer'};
+const row=machineDirectoryRow(machine,users,[{id:'farmer',name:'Farmer'}],[{machineId:'machine',landAcres:2},{machineId:'machine',landAcres:3},{machineId:'elsewhere',landAcres:100}]);
+assert.equal(row.state,'Telangana');assert.equal(row.district,'Sangareddy');assert.equal(row.area,'Kandi');assert.equal(row.cfName,'Machendar');assert.equal(row.farmer,'Farmer');assert.equal(row.readiness,'idle');assert.equal(row.acres,5);
+assert.equal(machineDirectoryRow({...machine,district:'Nizamabad'},users,[],[]).district,'Nizamabad');
+assert.equal(machineDirectoryRow({...machine,operatingStatus:'maintenance'},users,[],[]).readiness,'maintenance');
+assert.equal(machineDirectoryRow({...machine,operatingStatus:'operating'},users,[],[]).readiness,'running');
+assert.equal(machineDirectoryRow({...machine,leadFarmerId:''},users,[],[]).readiness,'needs_farmer');
+assert.equal(machineDirectoryRow({id:'legacy',location:{district:'Medak',mandal:'Legacy area'}},[],[],[]).area,'Legacy area');
+assert.equal(machineDirectoryRow(machine,[{uid:'cf',parentId:'cf'}],[],[]).area,'Area not recorded');
+console.log('Machine directory passed: reporting area inheritance, machine geography precedence, legacy/missing locations, cycle safety, readiness and scoped acre totals.');
