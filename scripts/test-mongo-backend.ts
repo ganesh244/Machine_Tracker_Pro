@@ -57,6 +57,10 @@ try{
  assert.equal((await request('login',{username:'renamed-cf',password})).status,200);
  console.log('Username correction passed: Admin-only, uniqueness rollback, profile sync, same password, UID and reporting links, new login works.');
  const reset=await request('password',{uid:cf.uid,password:'Updated-test-password-2026'},cookie);assert.equal(reset.status,200);assert.equal((await request('read',{ref:{kind:'collection',path:'users'}},cfLogin.cookie)).status,401);assert.equal((await request('login',{username:'cf-one',password})).status,401);assert.equal((await request('login',{username:'cf-one',password:'Updated-test-password-2026'})).status,200);
+ const scheduleDetails={name:'Lean season',state:'Telangana',district:'Nizamabad',seasonStart:'2099-06-01',seasonEnd:'2099-09-30',preAlertDate:'2099-05-01',postAlertDate:'2099-10-01'};
+ const schedule=await command('createSeasonSchedule',[scheduleDetails],cookie);assert.equal(schedule.state,'Telangana');
+ const changedSeason=await command('updateSeasonSchedule',[schedule.id,{...scheduleDetails,name:'Updated season'}],cookie);assert.equal(changedSeason.name,'Updated season');await command('archiveSeasonSchedule',[schedule.id,true],cookie);
+ console.log('Light seasonal schedule create/update/archive passed without loading machine photos.');
  await request('logout',{},cookie);assert.equal((await request('read',{ref:{kind:'collection',path:'users'}},cookie)).status,401);
  console.log('Mongo backend passed: real replica-set transactions, bootstrap once, hashed credentials, login/logout/revocation, Admin user creation, duplicate rollback, hierarchy-scoped reads, forged-role/direct-write denial, QR distribution, machine and farmer onboarding.');
 }finally{await new Promise<void>(resolve=>server.close(()=>resolve()));await closeMongo();await replica.stop();}

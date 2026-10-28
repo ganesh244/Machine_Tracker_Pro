@@ -36,8 +36,7 @@ export async function createSeasonSchedule(actor:UserProfile,details:Omit<Season
  if(!details.name.trim()||!state||!district)throw new Error('Enter season name, state and district.');
  if(actor.role==='district_manager'&&(!same(district,own.district)||!same(state,own.state)))throw new Error('Schedule inspections for your assigned state and district.');
  if(['admin','farm_mechanization'].includes(actor.role)){
-  const machines=(await getDocs(collection(db,'planters'))).docs.map(row=>row.data() as FieldMachine);
-  if(!isPresetLocation(state,district)&&!users.some(user=>{const loc=userSeasonLocation(user,users);return same(loc.state,state)&&same(loc.district,district);})&&!machines.some(machine=>same(machine.state,state)&&same(machine.district,district)))throw new Error('Select a state and district present in your team directory or machine records.');
+  if(!isPresetLocation(state,district)&&!users.some(user=>{const loc=userSeasonLocation(user,users);return same(loc.state,state)&&same(loc.district,district);})){const machines=(await getDocs(collection(db,'planters'))).docs.map(row=>row.data() as FieldMachine);if(!machines.some(machine=>same(machine.state,state)&&same(machine.district,district)))throw new Error('Select a state and district present in your team directory or machine records.');}
  }
  if(![details.seasonStart,details.seasonEnd,details.preAlertDate,details.postAlertDate].every(validDate))throw new Error('Enter valid season and alert dates.');
  if(details.preAlertDate>details.seasonStart||details.seasonEnd<details.seasonStart||details.postAlertDate<details.seasonEnd)throw new Error('Pre-season alert must be on/before season start, and post-season alert on/after season end.');
