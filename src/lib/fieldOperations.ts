@@ -1,3 +1,4 @@
+import { qrBatchPrefix } from './qrBatchIdentity.js';
 import { isPresetLocation, STATE_DISTRICTS } from './locations.js';
 import { isRemoteBrowser, remoteCommand } from './backendClient.js';
 import { collection, doc, getDoc, getDocs, writeBatch } from './data.js';
@@ -78,7 +79,7 @@ export async function createQRBatch(actor: UserProfile, name: string, quantity: 
   const batch: QRBatch = { id: batchId, name: name.trim(), quantity, ...metadata, createdAt: new Date().toISOString(), createdBy: actor.uid };
   const commit = writeBatch(db);
   commit.set(doc(db, 'qr_batches', batchId), batch);
-  const prefix = `QR-${new Date().getFullYear()}-${batchId.slice(0, 8).toUpperCase()}`;
+  const prefix = qrBatchPrefix(metadata,batchId);
   if ((await getDoc(doc(db, 'qr_labels', `${prefix}-001`))).exists()) throw new Error('Could not reserve unique label IDs. Please generate the batch again.');
   for (let index = 1; index <= quantity; index++) {
     const id = `${prefix}-${String(index).padStart(3, '0')}`;
