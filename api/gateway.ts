@@ -89,7 +89,7 @@ export default async function handler(req:any,res:any){
  }catch(error:any){
   console.error('FarmMech API request failed',{name:error?.name||'Error',code:error?.code,action:String(req.query?.action||'')});
   if(error?.code===11000)return res.status(409).json({error:'This username or record already exists. Reload and try again.'});
-  if(error?.name?.includes('Mongo')||String(error?.message).includes('Database connection'))return res.status(503).json({error:'Database unavailable. Ask Admin to check the MongoDB connection.'});
+  if(error?.name?.includes('Mongo')||error?.name?.includes('PoolCleared')||String(error?.message).includes('server monitor timeout')||String(error?.message).includes('Database connection'))return res.status(503).json({error:'Database unavailable. Ask Admin to check the MongoDB connection.'});
   return res.status(error?.status||400).json({error:error instanceof Error?error.message:'The request could not be completed.'});
  }
 }
