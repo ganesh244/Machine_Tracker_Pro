@@ -22,7 +22,7 @@ export const QR_A4_CSS = `
 .qr-a4-sticker small { font:6pt Arial,sans-serif; line-height:1.3; }
 .qr-a4-empty { border-color:#e0e5e1; background:white; }
 @media print {
- .qr-a4-pages { width:190mm!important; margin:0!important; padding:0!important; }
+ .qr-a4-pages { zoom:1!important; width:190mm!important; margin:0!important; padding:0!important; }
  .qr-a4-sheet { width:190mm!important; height:277mm!important; margin:0!important; box-shadow:none!important; break-inside:avoid; page-break-inside:avoid; break-after:page; page-break-after:always; print-color-adjust:exact; -webkit-print-color-adjust:exact; }
  .qr-a4-sheet:last-child { break-after:auto; page-break-after:auto; }
 }
