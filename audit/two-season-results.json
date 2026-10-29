@@ -1,0 +1,70 @@
+{
+  "testedAt": "2026-10-29T11:10:58.250Z",
+  "environment": "Isolated local demo, production not modified",
+  "results": [
+    {
+      "name": "Team creation and vacant District Manager",
+      "status": "PASS",
+      "detail": "Area → State branch, receiving CF/JCF and unrelated AP branch created."
+    },
+    {
+      "name": "Admin QR → District → Area → three machine types → farmers",
+      "status": "PASS",
+      "detail": "100 QR labels; 3 machines; CF, JCF and Area each onboard a farmer; batch extended to 150 without changing attached labels."
+    },
+    {
+      "name": "Season 1 opening",
+      "status": "PASS",
+      "detail": "All three readiness inspections; MCP opening 1,000 rev with proof; early final submission denied."
+    },
+    {
+      "name": "Season 1 completion",
+      "status": "PASS",
+      "detail": "MCP 300 ac + drum 200 ac + laser 0 ac = 500 ac; 3 pre and 3 post checks; 2-acre optional visit not added twice."
+    },
+    {
+      "name": "All four maintenance approvals and field completion",
+      "status": "PASS",
+      "detail": "Area → District → State → FM final → Admin coordinates → JCF repair report; restored workable; completion alerts reach all seven roles."
+    },
+    {
+      "name": "Between-season transfer and farmer change",
+      "status": "PASS",
+      "detail": "Same QR to Sangareddy CF via direct Area → State branch; original farmer archived, new farmer registered, old photos/rate retained."
+    },
+    {
+      "name": "Season 2 readiness, scope and missing-manager routing",
+      "status": "PASS",
+      "detail": "MCP-only alert in Sangareddy; drum/laser plan in Nizamabad; failed trial escalates; absent District stage skipped but FM approval retained; new opening uses 2,000 rev/ac."
+    },
+    {
+      "name": "Two-season analytics for every role",
+      "status": "PASS",
+      "detail": "900 ac combined: Soybean 150, Maize 360, Paddy 390; original branch retains 650 historical ac; receiving branch sees its own 250; AP branch sees 0; 6 reports, 12 inspections."
+    },
+    {
+      "name": "Corrections, persistence, calibration and read-alert state",
+      "status": "PASS",
+      "detail": "Saved reports keep separate rates/geography; revision replaces instead of double-counting; redispatch preserves read status; all values persisted in demo store."
+    },
+    {
+      "name": "Late onboarding and existing-campaign backfill",
+      "status": "PASS",
+      "detail": "New CF and JCF receive existing MCP campaign immediately; dispatch repairs old saved recipient lists without duplicate reminders or resetting read status."
+    },
+    {
+      "name": "Strict calendar validation",
+      "status": "PASS",
+      "detail": "Invalid month/day and non-leap 29 February rejected on create and edit; valid 29 February 2028 retained."
+    }
+  ],
+  "issues": [],
+  "totals": {
+    "season1": 500,
+    "season2": 400,
+    "combined": 900,
+    "machines": 3,
+    "reports": 6,
+    "inspections": 12
+  }
+}

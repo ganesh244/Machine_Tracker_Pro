@@ -95,7 +95,7 @@ export default async function handler(req:any,res:any){
   }
   if(action==='command'){
    await throttle('command:'+actor.uid,300);const args=body.args;if(!Array.isArray(args)||args.length>5)throw new Error('Invalid command arguments.');
-   if(body.name==='dispatchSeasonAlerts'){await transaction(()=>seasons.dispatchSeasonAlerts(),['users','season_schedules','notifications']);return res.json({result:null});}
+   if(body.name==='dispatchSeasonAlerts'){await transaction(()=>seasons.dispatchSeasonAlerts(),['users','season_schedules','notifications','planters']);return res.json({result:null});}
    if(body.name==='createTeamUser'){
     if(actor.role!=='admin')return res.status(403).json({error:'Only Admin can create accounts.'});const details=args[0];validateCredentials(details?.username,details?.password);const passwordHash=await hashPassword(details.password);
     const user=await transaction(async session=>{const current=context.getStore()!.records['users/'+actor.uid];if(current?.role!=='admin')throw new Error('Admin access required.');const {password:ignoredPassword,...publicDetails}=details;const profile=await createTeamUser(current,publicDetails);await db.collection('accounts').insertOne({uid:profile.uid,username:details.username.toLowerCase(),passwordHash,createdAt:new Date()},{session});return profile;});return res.json({result:user});

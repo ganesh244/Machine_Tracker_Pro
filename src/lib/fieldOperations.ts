@@ -3,6 +3,7 @@ import { isPresetLocation, STATE_DISTRICTS } from './locations.js';
 import { isRemoteBrowser, remoteCommand } from './backendClient.js';
 import { collection, doc, getDoc, getDocs, writeBatch } from './data.js';
 import { db } from './database.js';
+import { refreshSeasonRecipients } from './seasonOperations.js';
 import type { Planter, UserProfile, UserRole } from '../types.js';
 
 export const MACHINE_TYPES = ['MCP', 'Drum seeder', 'Laser land leveller', 'Other'] as const;
@@ -157,7 +158,7 @@ export async function onboardFieldMachine(actor: UserProfile, labelId: string, d
   const commit = writeBatch(db);
   commit.set(doc(db, 'planters', labelId), machine);
   commit.update(doc(db, 'qr_labels', labelId), { status: 'attached', machineId: labelId });
-  await commit.commit(); return machine;
+  await commit.commit(); await refreshSeasonRecipients(); return machine;
 }
 
 export async function onboardLeadFarmer(actor: UserProfile, machineId: string, details: FieldLocation & { name: string; phone: string; landAcres: number; photos: string[] }) {
@@ -209,5 +210,5 @@ export async function assignResponsibleCF(actor: UserProfile, machineId: string,
   commit.update(doc(db,'planters',machineId),{cfId:cf.uid,currentHolderId:cf.uid,currentHolderRole:'cf',cfJf:cf.uid,lastUpdated:now});
   commit.set(doc(db,'machine_assignments',crypto.randomUUID()),{machineId,fromCF:machine.cfId||machine.currentHolderId,toCF:cf.uid,assignedBy:actor.uid,timestamp:now});
   commit.set(doc(db,'notifications',crypto.randomUUID()),{userId:cf.uid,title:'Machine assigned',message:`${machineId} is now assigned to you. Scan its QR to manage farmers and usage.`,read:false,timestamp:now,link:machineId,page:'machines'});
-  await commit.commit();
+  await commit.commit(); await refreshSeasonRecipients();
 }

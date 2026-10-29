@@ -2,6 +2,7 @@ import { isRemoteBrowser, remoteCommand } from './backendClient.js';
 import { collection, doc, getDoc, getDocs, writeBatch } from './data.js';
 import { db } from './database.js';
 import { isLocalDemo } from './demo.js';
+import { refreshSeasonRecipients } from './seasonOperations.js';
 import type { UserProfile, UserRole } from '../types.js';
 export const ASSIGNABLE_ROLES = ['state_manager', 'district_manager', 'area_manager', 'cf', 'jcf'] as const;
 export const PARENT_ROLES: Partial<Record<UserRole, UserRole[]>> = { state_manager: ['admin'], district_manager: ['state_manager'], area_manager: ['district_manager', 'state_manager'], cf: ['area_manager', 'district_manager', 'state_manager'], jcf: ['cf'] };
@@ -25,7 +26,7 @@ export async function createTeamUser(actor: UserProfile, details: { username?:st
   commit.set(doc(db, 'users', user.uid), user);
   commit.set(doc(db, 'publicProfiles', user.uid), user);
   commit.set(doc(db, 'team_audit', crypto.randomUUID()), { action: 'User created', userId: user.uid, role: user.role, parentId: user.parentId, createdBy: actor.uid, timestamp: new Date().toISOString() });
-  await commit.commit(); return user;
+  await commit.commit(); await refreshSeasonRecipients(); return user;
 }
 
 /** Correct a display name without changing login credentials or reporting links. */

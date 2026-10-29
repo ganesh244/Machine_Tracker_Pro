@@ -1,0 +1,324 @@
+{
+  "testedAt": "2026-10-29T10:54:25.941Z",
+  "environment": "Local browser demo",
+  "rolePageViews": [
+    {
+      "role": "Asha · Admin team",
+      "page": "Season acreage",
+      "rendered": true,
+      "error": false
+    },
+    {
+      "role": "Asha · Admin team",
+      "page": "Analytics",
+      "rendered": true,
+      "error": false
+    },
+    {
+      "role": "Asha · Admin team",
+      "page": "Machines",
+      "rendered": true,
+      "error": false
+    },
+    {
+      "role": "Asha · Admin team",
+      "page": "Maintenance",
+      "rendered": true,
+      "error": false
+    },
+    {
+      "role": "Asha · Admin team",
+      "page": "Season checks",
+      "rendered": true,
+      "error": false
+    },
+    {
+      "role": "Asha · Admin team",
+      "page": "Lead farmers",
+      "rendered": true,
+      "error": false
+    },
+    {
+      "role": "Srinivas · State manager",
+      "page": "Season acreage",
+      "rendered": true,
+      "error": false
+    },
+    {
+      "role": "Srinivas · State manager",
+      "page": "Analytics",
+      "rendered": true,
+      "error": false
+    },
+    {
+      "role": "Srinivas · State manager",
+      "page": "Machines",
+      "rendered": true,
+      "error": false
+    },
+    {
+      "role": "Srinivas · State manager",
+      "page": "Maintenance",
+      "rendered": true,
+      "error": false
+    },
+    {
+      "role": "Srinivas · State manager",
+      "page": "Season checks",
+      "rendered": true,
+      "error": false
+    },
+    {
+      "role": "Srinivas · State manager",
+      "page": "Lead farmers",
+      "rendered": true,
+      "error": false
+    },
+    {
+      "role": "Divya · District manager",
+      "page": "Season acreage",
+      "rendered": true,
+      "error": false
+    },
+    {
+      "role": "Divya · District manager",
+      "page": "Analytics",
+      "rendered": true,
+      "error": false
+    },
+    {
+      "role": "Divya · District manager",
+      "page": "Machines",
+      "rendered": true,
+      "error": false
+    },
+    {
+      "role": "Divya · District manager",
+      "page": "Maintenance",
+      "rendered": true,
+      "error": false
+    },
+    {
+      "role": "Divya · District manager",
+      "page": "Season checks",
+      "rendered": true,
+      "error": false
+    },
+    {
+      "role": "Divya · District manager",
+      "page": "Lead farmers",
+      "rendered": true,
+      "error": false
+    },
+    {
+      "role": "Arun · Area manager",
+      "page": "Season acreage",
+      "rendered": true,
+      "error": false
+    },
+    {
+      "role": "Arun · Area manager",
+      "page": "Analytics",
+      "rendered": true,
+      "error": false
+    },
+    {
+      "role": "Arun · Area manager",
+      "page": "Machines",
+      "rendered": true,
+      "error": false
+    },
+    {
+      "role": "Arun · Area manager",
+      "page": "Maintenance",
+      "rendered": true,
+      "error": false
+    },
+    {
+      "role": "Arun · Area manager",
+      "page": "Season checks",
+      "rendered": true,
+      "error": false
+    },
+    {
+      "role": "Arun · Area manager",
+      "page": "Lead farmers",
+      "rendered": true,
+      "error": false
+    },
+    {
+      "role": "Chandra · Community facilitator",
+      "page": "Season acreage",
+      "rendered": true,
+      "error": false
+    },
+    {
+      "role": "Chandra · Community facilitator",
+      "page": "Analytics",
+      "rendered": true,
+      "error": false
+    },
+    {
+      "role": "Chandra · Community facilitator",
+      "page": "Machines",
+      "rendered": true,
+      "error": false
+    },
+    {
+      "role": "Chandra · Community facilitator",
+      "page": "Maintenance",
+      "rendered": true,
+      "error": false
+    },
+    {
+      "role": "Chandra · Community facilitator",
+      "page": "Season checks",
+      "rendered": true,
+      "error": false
+    },
+    {
+      "role": "Chandra · Community facilitator",
+      "page": "Lead farmers",
+      "rendered": true,
+      "error": false
+    },
+    {
+      "role": "Ravi · JCF / Field operator",
+      "page": "Season acreage",
+      "rendered": true,
+      "error": false
+    },
+    {
+      "role": "Ravi · JCF / Field operator",
+      "page": "Analytics",
+      "rendered": true,
+      "error": false
+    },
+    {
+      "role": "Ravi · JCF / Field operator",
+      "page": "Machines",
+      "rendered": true,
+      "error": false
+    },
+    {
+      "role": "Ravi · JCF / Field operator",
+      "page": "Maintenance",
+      "rendered": true,
+      "error": false
+    },
+    {
+      "role": "Ravi · JCF / Field operator",
+      "page": "Season checks",
+      "rendered": true,
+      "error": false
+    },
+    {
+      "role": "Ravi · JCF / Field operator",
+      "page": "Lead farmers",
+      "rendered": true,
+      "error": false
+    },
+    {
+      "role": "Leadership · Farm Mechanization Team",
+      "page": "Season acreage",
+      "rendered": true,
+      "error": false
+    },
+    {
+      "role": "Leadership · Farm Mechanization Team",
+      "page": "Analytics",
+      "rendered": true,
+      "error": false
+    },
+    {
+      "role": "Leadership · Farm Mechanization Team",
+      "page": "Machines",
+      "rendered": true,
+      "error": false
+    },
+    {
+      "role": "Leadership · Farm Mechanization Team",
+      "page": "Maintenance",
+      "rendered": true,
+      "error": false
+    },
+    {
+      "role": "Leadership · Farm Mechanization Team",
+      "page": "Season checks",
+      "rendered": true,
+      "error": false
+    },
+    {
+      "role": "Leadership · Farm Mechanization Team",
+      "page": "Lead farmers",
+      "rendered": true,
+      "error": false
+    }
+  ],
+  "mobileWidths": [
+    {
+      "document": 384,
+      "page": "Home",
+      "viewport": 390
+    },
+    {
+      "document": 384,
+      "page": "Acreage",
+      "viewport": 390
+    },
+    {
+      "document": 384,
+      "page": "Analytics",
+      "viewport": 390
+    },
+    {
+      "document": 384,
+      "page": "Machines",
+      "viewport": 390
+    },
+    {
+      "document": 384,
+      "page": "Maintenance",
+      "viewport": 390
+    },
+    {
+      "document": 384,
+      "page": "Season checks",
+      "viewport": 390
+    },
+    {
+      "document": 384,
+      "page": "Lead farmers",
+      "viewport": 390
+    }
+  ],
+  "issues": [
+    {
+      "severity": "Medium",
+      "name": "Active Analytics source hover contrast",
+      "foreground": "rgb(255,255,255)",
+      "background": "rgb(240,245,238)",
+      "hover": true,
+      "source": "src/components/operations/season-production.css:1",
+      "status": "resolved",
+      "fix": "Explicit dark green selected hover and keyboard focus styling"
+    }
+  ],
+  "screenshot": "/private/tmp/farmmech-audit-mobile-analytics.png",
+  "remediation": {
+    "verifiedAt": "2026-10-29T11:13:24.625Z",
+    "desktopHover": {
+      "foreground": "rgb(255,255,255)",
+      "background": "rgb(20,86,64)"
+    },
+    "mobile": {
+      "background": "rgb(25, 107, 83)",
+      "document": 384,
+      "hover": false,
+      "pressed": "true",
+      "text": "rgb(255, 255, 255)",
+      "viewport": 390
+    },
+    "screenshot": "/private/tmp/farmmech-analytics-contrast-fixed.png"
+  }
+}

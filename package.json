@@ -30,7 +30,8 @@
     "test:backend": "tsx scripts/test-mongo-backend.ts",
     "test:locations": "node scripts/test-location-presets.mjs",
     "test:season-production": "node scripts/test-season-production.mjs",
-    "test:movements": "node scripts/test-machine-movements.mjs"
+    "test:movements": "node scripts/test-machine-movements.mjs",
+    "test:two-seasons": "node scripts/test-two-season-audit.mjs"
   },
   "dependencies": {
     "@google/genai": "^1.29.0",

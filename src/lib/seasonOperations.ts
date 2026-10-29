@@ -13,7 +13,11 @@ export const POST_CHECKS:Record<string,string>={cleaned:'Machine cleaned',lubric
 const day=(date=new Date())=>date.toLocaleDateString('en-CA');
 async function profiles(){return (await getDocs(collection(db,'users'))).docs.map(row=>row.data() as UserProfile);}
 async function verify(actor:UserProfile){const snap=await getDoc(doc(db,'users',actor.uid));if(!snap.exists()||snap.data().role!==actor.role)throw new Error('Your role changed. Reload your account.');}
-const validDate=(date:string)=>/^\d{4}-\d{2}-\d{2}$/.test(date)&&Number.isFinite(Date.parse(date+'T12:00:00Z'));
+const validDate=(date:string)=>{
+ if(typeof date!=='string'||!/^\d{4}-\d{2}-\d{2}$/.test(date))return false;
+ const parsed=new Date(date+'T12:00:00Z');
+ return Number.isFinite(parsed.getTime())&&parsed.toISOString().slice(0,10)===date;
+};
 const same = (a?:string,b?:string) => !!a && !!b && a.trim().toLowerCase() === b.trim().toLowerCase();
 export function userSeasonLocation(user:UserProfile,users:UserProfile[]) {
  const path=reportingAncestors(users,user.uid);
@@ -86,8 +90,10 @@ export async function archiveSeasonSchedule(actor:UserProfile,id:string,archived
 let dispatching:Promise<void>|undefined;
 export function dispatchSeasonAlerts(now=new Date()){if(isRemoteBrowser)return dispatching ||=remoteCommand('dispatchSeasonAlerts').finally(()=>{dispatching=undefined;});if(typeof window==='undefined')return dispatch(now);return dispatching ||=dispatch(now).finally(()=>{dispatching=undefined;});}
 async function dispatch(now:Date){
- const [users,schedules]=await Promise.all([profiles(),getDocs(collection(db,'season_schedules'))]);const commit=writeBatch(db);let count=0;
- for(const snapshot of schedules.docs){const schedule=snapshot.data() as SeasonSchedule;if(schedule.archived)continue;
+ const [users,snapshots]=await Promise.all([profiles(),getDocs(collection(db,'season_schedules'))]);
+ const schedules=await reconcileSeasonRecipients(users,snapshots.docs.map(row=>row.data() as SeasonSchedule));
+ const commit=writeBatch(db);let count=0;
+ for(const schedule of schedules){if(schedule.archived)continue;
   for(const phase of ['pre','post'] as const){if((phase==='pre'?schedule.preAlertDate:schedule.postAlertDate)>day(now))continue;
    for(const user of seasonRecipients(schedule,users)){
     const id=`season-${schedule.id}-${phase}-${user.uid}`;if((await getDoc(doc(db,'notifications',id))).exists())continue;
@@ -126,12 +132,19 @@ export async function saveSeasonInspection(actor:UserProfile,details:{scheduleId
  await commit.commit();return report;
 }
 
-// Re-evaluate targeted campaigns when asset responsibility / location changes.
-export async function refreshSeasonRecipients(){
- const users=await profiles(),machines=(await getDocs(collection(db,'planters'))).docs.map(row=>row.data() as FieldMachine),schedules=await getDocs(collection(db,'season_schedules'));
- for(const row of schedules.docs){const schedule=row.data() as SeasonSchedule;if(schedule.archived||!['selected_machines','machine_types'].includes(schedule.coverage||''))continue;const ids=new Set<string>([schedule.ownerId]);
+// Derive current recipients before every dispatch, including older saved campaigns.
+async function reconcileSeasonRecipients(users:UserProfile[],schedules:SeasonSchedule[]){
+ if(!schedules.some(schedule=>!schedule.archived&&['selected_machines','machine_types'].includes(schedule.coverage||'')))return schedules;
+ const machines=(await getDocs(collection(db,'planters'))).docs.map(row=>row.data() as FieldMachine);
+ const updatedSchedules:SeasonSchedule[]=[];
+ for(const schedule of schedules){if(schedule.archived||!['selected_machines','machine_types'].includes(schedule.coverage||'')){updatedSchedules.push(schedule);continue;}const ids=new Set<string>([schedule.ownerId]);
   for(const machine of machines.filter(machine=>machineInSeason(machine,schedule,users))){const cfId=machine.cfId||machine.currentHolderId;for(const user of reportingAncestors(users,cfId))ids.add(user.uid);for(const user of users)if(user.role==='jcf'&&user.parentId===cfId)ids.add(user.uid);}
-  const recipientIds=[...ids];if(JSON.stringify(recipientIds.slice().sort())===JSON.stringify((schedule.recipientIds||[]).slice().sort()))continue;const updated={...schedule,recipientIds};const batch=writeBatch(db);batch.update(row.ref,{recipientIds});await batch.commit();await syncRecipients(updated,users);
+  const recipientIds=[...ids];if(JSON.stringify(recipientIds.slice().sort())===JSON.stringify((schedule.recipientIds||[]).slice().sort())){updatedSchedules.push(schedule);continue;}const updated={...schedule,recipientIds};const batch=writeBatch(db);batch.update(doc(db,'season_schedules',schedule.id),{recipientIds});await batch.commit();await syncRecipients(updated,users);updatedSchedules.push(updated);
  }
+ return updatedSchedules;
+}
+// Run after responsibility changes; do not reuse an older in-flight demo snapshot.
+export async function refreshSeasonRecipients(){
+ if(dispatching)await dispatching;
  await dispatchSeasonAlerts();
 }
