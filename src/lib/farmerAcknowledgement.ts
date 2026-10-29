@@ -2,7 +2,7 @@ import { receiptTranslator, type ReceiptLanguage } from './receiptTranslations.j
 export type { ReceiptLanguage } from './receiptTranslations.js';
 import QRCode from 'qrcode';
 import { jsPDF } from 'jspdf';
-import type { FieldMachine, LeadFarmer } from './fieldOperations.js';
+import { reportingAncestors, type FieldMachine, type LeadFarmer } from './fieldOperations.js';
 import type { UserProfile } from '../types.js';
 
 let fontsReady:Promise<unknown>|undefined;
@@ -21,7 +21,7 @@ export async function farmerAcknowledgement(machine:FieldMachine,farmer:LeadFarm
  const wrap=(value:string,x:number,y:number,width:number,size=20)=>{c.font=`400 ${size}px Arial, ReceiptTelugu, ReceiptDevanagari, sans-serif`;let line='',row=0;for(const {segment:char} of new Intl.Segmenter(language,{granularity:'grapheme'}).segment(t(String(value)))){if(c.measureText(line+char).width>width&&line){text(line,x,y+row*27,size);line='';row++;}line+=char;}if(line)text(line,x,y+row*27,size);return row+1;};
  const rule=(y:number)=>{c.strokeStyle='#d6dfd9';c.lineWidth=1;c.beginPath();c.moveTo(70,y);c.lineTo(1120,y);c.stroke();};
  // Preserve the supplied Foundation logo’s aspect ratio and transparency.
- c.drawImage(logo,70,28,500,500*logo.height/logo.width);
+ c.drawImage(logo,70,40,350,350*logo.height/logo.width);
  text('MACHINE HANDOVER ACKNOWLEDGEMENT',70,183,28,true);
  text('Lead farmer registration and custody record',70,218,21);
  text(`${t('Receipt')}: ACK-${farmer.id}`,70,260,15);text(`${t('Registered')}: ${new Date(farmer.createdAt).toLocaleDateString('en-IN')}`,70,286,18);
@@ -42,12 +42,12 @@ export async function farmerAcknowledgement(machine:FieldMachine,farmer:LeadFarm
  field('Recorded GPS',`${farmer.lat.toFixed(6)}, ${farmer.lng.toFixed(6)}`);
  y+=8;rule(y);y+=38;section('02  '+t('MACHINE & HANDOVER DETAILS'));
  const officer=users.find(user=>user.uid===(machine.cfId||machine.currentHolderId));
- const recorder=users.find(user=>user.uid===farmer.createdBy);
+ const areaManager=reportingAncestors(users,machine.cfId||machine.currentHolderId).find(user=>user.role==='area_manager');
  // Compact two-column rows leave generous space for handwritten signatures.
  const pair=(left:string,lv:string,right:string,rv:string)=>{text(t(left).toUpperCase(),70,y,14,true,'#63766a');text(t(right).toUpperCase(),610,y,14,true,'#63766a');const a=wrap(lv,70,y+27,490,19),b=wrap(rv,610,y+27,510,19);y+=27+Math.max(a,b)*27+19;};
  pair('Machine / QR identity',qrId,'Machine type',machine.machineType||machine.type||'Not recorded');
  field('Brand / Model',[machine.brand,machine.model].filter(Boolean).join(' / ')||'Not recorded',1040);
- pair('Responsible CF',officer?.displayName||'Not recorded','Registered by',recorder?.displayName||'Not recorded');
+ pair('Responsible CF',officer?.displayName||'Not recorded','Area Manager',areaManager?.displayName.split(' · ')[0]||'Not assigned');
  y+=5;rule(y);y+=35;
  y+=wrap('I acknowledge receipt / custody of the machine identified above. The farmer and machine details have been reviewed with me. This acknowledgement records handover; it is not a sale or transfer of ownership.',70,y,1040,19)*27;
  const signatureY=Math.max(y+90,1455);
