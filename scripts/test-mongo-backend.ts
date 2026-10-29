@@ -72,14 +72,22 @@ try{
  console.log('Username correction passed: Admin-only, uniqueness rollback, profile sync, same password, UID and reporting links, new login works.');
 
  const productionSeason=await command('createSeasonSchedule',[{name:'Season production test',state:'Telangana',district:'Nizamabad',seasonStart:'2025-06-01',seasonEnd:'2025-10-01',preAlertDate:'2025-05-01',postAlertDate:'2025-10-02',coverage:'machine_types',machineTypes:['MCP']}],cookie);
- const productionDetails={scheduleId:productionSeason.id,machineId:machine.id,scannedQRId:machine.id,totalAcres:500,crops:[{crop:'Soybean',acres:200},{crop:'Maize',acres:100},{crop:'Paddy',acres:200}],notes:'Season totals',photos:[photo]};
+ const productionDetails={scheduleId:productionSeason.id,machineId:machine.id,scannedQRId:machine.id,totalAcres:500,crops:[{crop:'Soybean',acres:200},{crop:'Maize',acres:100},{crop:'Paddy',acres:200}],notes:'Season totals',photos:[photo],meter:{before:0,after:998500,beforePhotos:[photo],afterPhotos:[photo]}};
  assert.equal((await request('command',{name:'saveSeasonProduction',args:[productionDetails]},otherCookie)).status,400);
- assert.equal((await request('command',{name:'saveSeasonProduction',args:[{...productionDetails,totalAcres:501}]},cfLogin.cookie)).status,400);
+ assert.equal((await request('command',{name:'saveSeasonProduction',args:[{...productionDetails,crops:[{crop:'Soybean',acres:501}]}]},cfLogin.cookie)).status,400);
  const production=await command('saveSeasonProduction',[productionDetails],cfLogin.cookie);assert.equal(production.totalAcres,500);
- const revision=await command('saveSeasonProduction',[{...productionDetails,totalAcres:600,crops:[{crop:'Soybean',acres:600}],photos:[]}],cfLogin.cookie);assert.equal(revision.revision,2);assert.equal(revision.history[0].totalAcres,500);
+ const revision=await command('saveSeasonProduction',[{...productionDetails,totalAcres:600,meter:{before:0,after:1198200,beforePhotos:[],afterPhotos:[photo]},crops:[{crop:'Soybean',acres:600}],photos:[]}],cfLogin.cookie);assert.equal(revision.revision,2);assert.equal(revision.history[0].totalAcres,500);
  const storedProduction=await db.collection('documents').findOne({path:'season_production/'+production.id});assert.deepEqual(storedProduction?.value.photos,[photo],'correction preserves saved photo bytes');
  assert.equal((await request('read',{ref:{kind:'collection',path:'season_production'}},fmCookie)).body.rows.length,1);
  assert.equal((await request('read',{ref:{kind:'collection',path:'season_production'}},otherCookie)).body.rows.length,0);
+
+ const openingPath='season_meter_readings/'+productionSeason.id+'_'+machine.id+'_before';const closingPath='season_meter_readings/'+productionSeason.id+'_'+machine.id+'_after';
+ assert.deepEqual((await db.collection('documents').findOne({path:openingPath}))?.value.photos,[photo]);assert.deepEqual((await db.collection('documents').findOne({path:closingPath}))?.value.photos,[photo]);
+ assert.equal((await request('command',{name:'saveMeterCalibration',args:[2000]},cfLogin.cookie)).status,400);
+ await command('saveMeterCalibration',[2000],cookie);assert.equal((await request('read',{ref:{kind:'doc',path:'settings/mcp_meter'}},cfLogin.cookie)).body.value.revolutionsPerAcre,2000);
+ const locked=await command('saveSeasonProduction',[{...productionDetails,meter:{before:0,after:1198200,beforePhotos:[],afterPhotos:[]},crops:[{crop:'Soybean',acres:600}]}],cfLogin.cookie);assert.equal(locked.totalAcres,600);assert.equal(locked.meter.revolutionsPerAcre,1997);
+ assert.equal((await request('read',{ref:{kind:'collection',path:'season_meter_readings'}},otherCookie)).body.rows.length,0);
+ console.log('Meter backend passed: protected evidence, unchanged photos after correction, Admin calibration and historical rate preserved.');
  console.log('Season production backend passed: reconciliation, scoped CF submission, correction history, retained photo bytes and FM visibility.');
  const reset=await request('password',{uid:cf.uid,password:'Updated-test-password-2026'},cookie);assert.equal(reset.status,200);assert.equal((await request('read',{ref:{kind:'collection',path:'users'}},cfLogin.cookie)).status,401);assert.equal((await request('login',{username:'cf-one',password})).status,401);assert.equal((await request('login',{username:'cf-one',password:'Updated-test-password-2026'})).status,200);
  const scheduleDetails={name:'Lean season',state:'Telangana',district:'Nizamabad',seasonStart:'2099-06-01',seasonEnd:'2099-09-30',preAlertDate:'2099-05-01',postAlertDate:'2099-10-01'};
