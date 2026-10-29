@@ -11,7 +11,7 @@ export function visibleRecords(actor:UserProfile,all:Record<string,any>){
  switch(kind){
  case 'users':return global||directory.has(id)||['admin','farm_mechanization'].includes(row.role);
  case 'planters':return machines.has(id)&&(!child||child==='usageLogs');
- case 'farmers':case 'field_usage':case 'season_inspections':return machines.has(row.machineId);
+ case 'farmers':case 'field_usage':case 'season_inspections':case 'season_production':return machines.has(row.machineId);
  case 'maintenance_requests':case 'maintenance_logs':return machines.has(row.planterId);
  case 'notifications':return row.userId===actor.uid;
  case 'qr_labels':return visibleLabels.has(id);

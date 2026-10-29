@@ -1,3 +1,6 @@
+import { SeasonalAnalytics } from './SeasonalAnalytics';
+import type { SeasonProduction } from '../../lib/seasonProduction';
+import type { SeasonSchedule } from '../../lib/seasonOperations';
 import React, { useMemo, useState } from 'react';
 import { buildOperationalAnalytics } from '../../lib/operationalAnalytics';
 import { OperationalInsights } from './OperationalInsights';
@@ -10,7 +13,7 @@ import { buildAnalytics, defaultGeography, type Geography } from '../../lib/anal
 const AnalyticsCharts = React.lazy(() => import('./AnalyticsCharts'));
 const acres = (value: number) => value.toLocaleString('en-IN', { maximumFractionDigits: 2 });
 const geographyNames = { village: 'Villages', mandal: 'Areas / mandals', district: 'Districts', state: 'States' };
-export function AnalyticsTab({ actor, users, machines, usages, farmers, requests, labels, onOpenMachine }: { actor: UserProfile; users: UserProfile[]; machines: FieldMachine[]; usages: FieldUsage[]; farmers: LeadFarmer[]; requests: FieldMaintenance[]; labels: QRLabel[]; onOpenMachine: (id: string) => void }) {
+function VisitAnalytics({ actor, users, machines, usages, farmers, requests, labels, onOpenMachine }: { actor: UserProfile; users: UserProfile[]; machines: FieldMachine[]; usages: FieldUsage[]; farmers: LeadFarmer[]; requests: FieldMaintenance[]; labels: QRLabel[]; onOpenMachine: (id: string) => void }) {
   const [from, setFrom] = useState(''), [to, setTo] = useState('');
   const [geography, setGeography] = useState<Geography>(defaultGeography(actor.role));
   const invalid = !!from && !!to && from > to;
@@ -35,4 +38,9 @@ export function AnalyticsTab({ actor, users, machines, usages, farmers, requests
     <section className="fo-card"><div className="fo-section-heading"><div><h2>Every machine, every acre</h2><p>Includes machines with zero recorded usage, so idle capacity stays visible.</p></div></div><div className="fo-table-scroll"><table className="fo-table"><thead><tr><th>Machine / QR</th><th>Type</th><th>Current status</th><th>Acres worked</th><th>Visits</th><th>Responsible CF</th></tr></thead><tbody>{data.byMachine.map(row => <tr key={row.machine.id}><td><button className="fo-text-button" onClick={() => onOpenMachine(row.machine.id)}>{row.machine.id}</button></td><td>{row.machine.machineType || row.machine.type}</td><td><span className={`fo-badge ${row.status === 'Running' ? 'green' : 'amber'}`}>{row.status}</span></td><td>{acres(row.acres)} ac</td><td>{row.visits}</td><td>{users.find(user => user.uid === (row.machine.cfId || row.machine.currentHolderId))?.displayName || 'Unassigned'}</td></tr>)}{!data.byMachine.length && <tr><td colSpan={6}>No onboarded machines in your team yet.</td></tr>}</tbody></table></div></section>
     </>}
   </div>;
+}
+
+export function AnalyticsTab(props:Parameters<typeof VisitAnalytics>[0]&{productions:SeasonProduction[];schedules:SeasonSchedule[]}){
+ const [source,setSource]=useState<'season'|'visits'>('season');
+ return <><div className="sp-source-tabs" aria-label="Analytics source"><button className="fo-button secondary" aria-pressed={source==='season'} onClick={()=>setSource('season')}>Season reports · primary</button><button className="fo-button secondary" aria-pressed={source==='visits'} onClick={()=>setSource('visits')}>Visit logs · supporting</button></div>{source==='season'?<SeasonalAnalytics actor={props.actor} users={props.users} machines={props.machines} reports={props.productions} schedules={props.schedules} onOpenMachine={props.onOpenMachine}/>:<VisitAnalytics {...props}/>}</>;
 }
