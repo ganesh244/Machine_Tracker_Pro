@@ -1,0 +1,58 @@
+{
+  "testedAt": "2026-10-29T12:06:18.633Z",
+  "environment": "Isolated browser-demo service store; no production writes",
+  "entries": [
+    {
+      "step": "Admin → District → Area → CF",
+      "status": "PASS",
+      "detail": "QR generation/distribution, MCP onboarding and original farmer handover; six non-Admin roles denied QR generation."
+    },
+    {
+      "step": "Same CF new village",
+      "status": "PASS",
+      "detail": "area_manager: demo-cf → demo-cf; farmer closed/replaced; source loses current asset access, destination gains access/alerts; QR and historical performance preserved."
+    },
+    {
+      "step": "Within area",
+      "status": "PASS",
+      "detail": "area_manager: demo-cf → 8fe4b914-66e6-4e8e-8f0a-062592b26ed4; farmer closed/replaced; source loses current asset access, destination gains access/alerts; QR and historical performance preserved."
+    },
+    {
+      "step": "Between areas within district",
+      "status": "PASS",
+      "detail": "district_manager: 8fe4b914-66e6-4e8e-8f0a-062592b26ed4 → a36d53bb-d211-4cfc-889b-90f69093226c; farmer closed/replaced; source loses current asset access, destination gains access/alerts; QR and historical performance preserved."
+    },
+    {
+      "step": "Between districts within state",
+      "status": "PASS",
+      "detail": "state_manager: a36d53bb-d211-4cfc-889b-90f69093226c → 18d38978-ae7c-4731-ab92-d0269d3dceaf; farmer closed/replaced; source loses current asset access, destination gains access/alerts; QR and historical performance preserved."
+    },
+    {
+      "step": "Between states by FM",
+      "status": "PASS",
+      "detail": "farm_mechanization: 18d38978-ae7c-4731-ab92-d0269d3dceaf → 8643236b-0b58-4cea-982e-b5f8ff710ac1; farmer closed/replaced; source loses current asset access, destination gains access/alerts; QR and historical performance preserved."
+    },
+    {
+      "step": "Between states by Admin",
+      "status": "PASS",
+      "detail": "admin: 8643236b-0b58-4cea-982e-b5f8ff710ac1 → demo-cf; farmer closed/replaced; source loses current asset access, destination gains access/alerts; QR and historical performance preserved."
+    },
+    {
+      "step": "Standalone delink and re-onboard",
+      "status": "PASS",
+      "detail": "JCF releases current farmer; Area Manager registers the next farmer without changing QR/history."
+    },
+    {
+      "step": "Maintenance after all transfer levels",
+      "status": "PASS",
+      "detail": "Area → District → State → FM; Admin starts approved repair; JCF submits completion; workable status and all-team completion notifications verified."
+    },
+    {
+      "step": "Transfer with pending maintenance",
+      "status": "PASS",
+      "detail": "Cross-state transfer preserves stopped status; old managers cannot approve; receiving Area/District/State/FM review; receiving JCF completes the repair."
+    }
+  ],
+  "deniedInvalidActions": 47,
+  "issues": []
+}

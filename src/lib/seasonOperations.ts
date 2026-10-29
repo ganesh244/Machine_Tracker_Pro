@@ -1,4 +1,5 @@
 import { MACHINE_TYPES } from './fieldOperations.js';
+import { isCalendarDate } from './calendarDate.js';
 import { isPresetLocation } from './locations.js';
 import { isRemoteBrowser, remoteCommand } from './backendClient.js';
 import { collection, doc, getDoc, getDocs, writeBatch } from './data.js';
@@ -13,11 +14,7 @@ export const POST_CHECKS:Record<string,string>={cleaned:'Machine cleaned',lubric
 const day=(date=new Date())=>date.toLocaleDateString('en-CA');
 async function profiles(){return (await getDocs(collection(db,'users'))).docs.map(row=>row.data() as UserProfile);}
 async function verify(actor:UserProfile){const snap=await getDoc(doc(db,'users',actor.uid));if(!snap.exists()||snap.data().role!==actor.role)throw new Error('Your role changed. Reload your account.');}
-const validDate=(date:string)=>{
- if(typeof date!=='string'||!/^\d{4}-\d{2}-\d{2}$/.test(date))return false;
- const parsed=new Date(date+'T12:00:00Z');
- return Number.isFinite(parsed.getTime())&&parsed.toISOString().slice(0,10)===date;
-};
+const validDate=isCalendarDate;
 const same = (a?:string,b?:string) => !!a && !!b && a.trim().toLowerCase() === b.trim().toLowerCase();
 export function userSeasonLocation(user:UserProfile,users:UserProfile[]) {
  const path=reportingAncestors(users,user.uid);

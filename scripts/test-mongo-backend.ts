@@ -130,6 +130,8 @@ try{
  assert.equal((await request('command',{name:'startMaintenance',args:[repair.id]},cookie)).status,400);
  for(const username of ['area-two','district-two','state-two','fm-boss'])await command('reviewMaintenance',[repair.id,'approve','DEMO reviewed'],(await request('login',{username,password})).cookie);
  await command('startMaintenance',[repair.id],cookie);
+ assert.equal((await request('command',{name:'completeMaintenance',args:[repair.id,{technician:'DEMO Service team',partsReplaced:'Chain',serviceDate:'2026-02-30',actualCost:400,repairNotes:'DEMO chain replaced and trial run completed',repairPhotos:[photo],workableConfirmed:true}]},receivingCookie)).status,400);
+ assert.equal((await db.collection('documents').findOne({path:'maintenance_requests/'+repair.id}))?.value.status,'in_progress','invalid repair date rolls back completion');
  await command('completeMaintenance',[repair.id,{technician:'DEMO Service team',partsReplaced:'Chain',serviceDate:new Date().toLocaleDateString('en-CA'),actualCost:400,repairNotes:'DEMO chain replaced and trial run completed',repairPhotos:[photo],workableConfirmed:true}],receivingCookie);
  assert.equal((await db.collection('documents').findOne({path:'planters/'+machine.id}))?.value.operatingStatus,'idle');
  const myNotices=await request('read',{ref:{kind:'collection',path:'notifications'}},receivingCookie);const notice=myNotices.body.rows.find((row:any)=>row.value.scheduleId===secondSeason.id);assert.ok(notice);

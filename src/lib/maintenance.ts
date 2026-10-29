@@ -1,6 +1,7 @@
 import { isRemoteBrowser, remoteCommand } from './backendClient.js';
 import { collection, doc, getDoc, getDocs, writeBatch } from './data.js';
 import { db } from './database.js';
+import { isCalendarDate } from './calendarDate.js';
 import { canManageMachine, reportingAncestors, ROLE_NAMES, type FieldMachine } from './fieldOperations.js';
 import type { MaintenanceRequest, MaintenanceLog, UserProfile, UserRole } from '../types.js';
 
@@ -135,7 +136,7 @@ export async function completeMaintenance(actor: UserProfile, requestId: string,
   if (!request.approvals?.farmMechManager?.approved) throw new Error('Final Farm Mechanization approval must be recorded.');
   if (actor.role !== 'admin' && (!details.serviceDate || !details.partsReplaced?.trim())) throw new Error('Enter the service date and parts / service performed.');
   if (actor.role !== 'admin' && details.workableConfirmed !== true) throw new Error('Confirm the machine was tested and is workable.');
-  if (details.serviceDate && (!/^\d{4}-\d{2}-\d{2}$/.test(details.serviceDate) || !Number.isFinite(Date.parse(details.serviceDate + 'T12:00:00Z')) || details.serviceDate > new Date().toLocaleDateString('en-CA'))) throw new Error('Enter today or an earlier service date.');
+  if (details.serviceDate && (!isCalendarDate(details.serviceDate) || details.serviceDate > new Date().toLocaleDateString('en-CA',{timeZone:'Asia/Kolkata'}))) throw new Error('Enter a valid service date for today or earlier.');
   if (!details.technician.trim() || details.repairNotes.trim().length < 10) throw new Error('Enter the technician and describe the repair work.');
   if (!Number.isFinite(details.actualCost) || details.actualCost < 0) throw new Error('Enter a valid repair cost.');
   if (!details.repairPhotos.length) throw new Error('Add a photo showing the completed repair.');
