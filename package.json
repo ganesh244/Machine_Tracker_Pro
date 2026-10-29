@@ -32,7 +32,8 @@
     "test:season-production": "node scripts/test-season-production.mjs",
     "test:movements": "node scripts/test-machine-movements.mjs",
     "test:two-seasons": "node scripts/test-two-season-audit.mjs",
-    "test:transfer-levels": "node scripts/test-transfer-levels.mjs"
+    "test:transfer-levels": "node scripts/test-transfer-levels.mjs",
+    "test:fm-leadership": "node scripts/test-fm-leadership.mjs"
   },
   "dependencies": {
     "@google/genai": "^1.29.0",

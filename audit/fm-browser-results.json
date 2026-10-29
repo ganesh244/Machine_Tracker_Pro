@@ -1,0 +1,37 @@
+{
+  "testedAt": "2026-10-29T12:20:59.617Z",
+  "fixture": "Isolated synthetic data rendered through real SeasonalAnalytics component",
+  "comparisonChecks": [
+    {
+      "filter": "MCP",
+      "comparison": "+100% vs DEMO previous season"
+    },
+    {
+      "filter": "MCP CF",
+      "comparison": "+100% vs DEMO previous season"
+    },
+    {
+      "filter": "Drum CF",
+      "comparison": "+33.33% vs DEMO previous season"
+    },
+    {
+      "filter": "All current season",
+      "comparison": "+50% vs DEMO previous season"
+    }
+  ],
+  "totals": {
+    "allStates": 1050,
+    "telangana": 1000,
+    "andhraPradesh": 50
+  },
+  "csv": {
+    "dataRows": 5,
+    "includesBothStates": true
+  },
+  "fixedComparison": {
+    "MCP": 100,
+    "drumCF": 33.33,
+    "all": 50
+  },
+  "screenshot": "/private/tmp/farmmech-fm-comparison-fixed.png"
+}
