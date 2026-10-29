@@ -22,7 +22,7 @@ export interface QRLabel { id: string; batchId: string; holderId: string; status
 export interface LabelTransfer { id: string; labelIds: string[]; fromUserId: string; toUserId: string; timestamp: string }
 export interface FieldMachine extends Planter { qrLabelId?: string; onboardedBy?: string; leadFarmerId?: string; cfId?: string }
 export interface FieldLocation { state: string; district: string; mandal: string; village: string; lat: number; lng: number }
-export interface LeadFarmer extends FieldLocation { id: string; machineId: string; name: string; phone: string; landAcres: number; photos: string[]; createdAt: string; createdBy: string }
+export interface LeadFarmer extends FieldLocation { id: string; machineId: string; name: string; phone: string; landAcres: number; photos: string[]; createdAt: string; createdBy: string; status?:'active'|'released'; releasedAt?:string; releasedBy?:string; releaseReason?:string }
 export interface FieldUsage extends FieldLocation { id: string; machineId: string; leadFarmerId: string; farmerKind: 'lead' | 'fellow'; farmerName: string; phone: string; landAcres: number; crop: string; operationDate: string; photos: string[]; notes: string; recordedBy: string; recordedByName: string; createdAt: string }
 
 export function branchIds(users: UserProfile[], root: string): Set<string> {

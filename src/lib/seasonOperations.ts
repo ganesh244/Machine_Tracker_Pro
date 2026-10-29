@@ -125,3 +125,13 @@ export async function saveSeasonInspection(actor:UserProfile,details:{scheduleId
  for(const user of users.filter(row=>canManageMachine(row,machine,users))){commit.set(doc(db,'notifications',`report-${id}-${user.uid}`),{userId:user.uid,title:`${details.phase==='pre'?'Pre':'Post'}-season report submitted`,message:`${machine.id}: ${ready?'all checks passed':'maintenance escalated'}. ${actor.displayName} submitted photo evidence.`,read:false,timestamp,page:'seasons',scheduleId:schedule.id,link:machine.id});}
  await commit.commit();return report;
 }
+
+// Re-evaluate targeted campaigns when asset responsibility / location changes.
+export async function refreshSeasonRecipients(){
+ const users=await profiles(),machines=(await getDocs(collection(db,'planters'))).docs.map(row=>row.data() as FieldMachine),schedules=await getDocs(collection(db,'season_schedules'));
+ for(const row of schedules.docs){const schedule=row.data() as SeasonSchedule;if(schedule.archived||!['selected_machines','machine_types'].includes(schedule.coverage||''))continue;const ids=new Set<string>([schedule.ownerId]);
+  for(const machine of machines.filter(machine=>machineInSeason(machine,schedule,users))){const cfId=machine.cfId||machine.currentHolderId;for(const user of reportingAncestors(users,cfId))ids.add(user.uid);for(const user of users)if(user.role==='jcf'&&user.parentId===cfId)ids.add(user.uid);}
+  const recipientIds=[...ids];if(JSON.stringify(recipientIds.slice().sort())===JSON.stringify((schedule.recipientIds||[]).slice().sort()))continue;const updated={...schedule,recipientIds};const batch=writeBatch(db);batch.update(row.ref,{recipientIds});await batch.commit();await syncRecipients(updated,users);
+ }
+ await dispatchSeasonAlerts();
+}

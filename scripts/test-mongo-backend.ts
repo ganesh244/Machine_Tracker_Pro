@@ -100,6 +100,22 @@ try{
  assert.deepEqual((await db.collection('documents').findOne({path:'planters/'+machine.id}))?.value,savedMachine,'metadata-only schedule planning preserves machine photo data');
  console.log('Machine-targeted season backend passed: persisted machine IDs, server-derived recipients, existing machine data preserved.');
 
+
+ const sourceMovementCookie=(await request('login',{username:'cf-one',password:'Updated-test-password-2026'})).cookie;
+ const ended=await command('releaseLeadFarmer',[machine.id,{farmerId:farmer.id,reason:'Collected from the original lead farmer',photos:[]}],sourceMovementCookie);assert.equal(ended.kind,'farmer_released');
+ assert.equal((await db.collection('documents').findOne({path:'farmers/'+farmer.id}))?.value.status,'released');assert.deepEqual((await db.collection('documents').findOne({path:'farmers/'+farmer.id}))?.value.photos,[photo]);
+ const nextFarmer=await command('onboardLeadFarmer',[machine.id,{...location,name:'Next Farmer',phone:'0000000000',landAcres:2,photos:[photo]}],sourceMovementCookie);
+ const destination={...location,village:'Receiving village',cfId:otherCF.uid,expectedCFId:cf.uid,expectedFarmerId:nextFarmer.id,reason:'Relocation to the receiving CF branch',photos:[photo]};
+ assert.equal((await request('command',{name:'transferFieldMachine',args:[machine.id,destination]},sourceMovementCookie)).status,400);
+ const moved=await command('transferFieldMachine',[machine.id,destination],cookie);assert.equal(moved.toCFId,otherCF.uid);
+ const movedMachine=(await db.collection('documents').findOne({path:'planters/'+machine.id}))?.value;assert.equal(movedMachine.qrLabelId,machine.id);assert.equal(movedMachine.leadFarmerId,'');assert.equal(movedMachine.cfId,otherCF.uid);assert.deepEqual(movedMachine.gallery,[largePhoto]);
+ assert.equal((await request('read',{ref:{kind:'collection',path:'planters'}},sourceMovementCookie)).body.rows.length,0);
+ const outgoingHistory=await request('read',{ref:{kind:'collection',path:'machine_movements'}},sourceMovementCookie);assert.equal(outgoingHistory.body.rows.length,2);
+ assert.equal((await request('read',{ref:{kind:'collection',path:'season_production'}},sourceMovementCookie)).body.rows.length,1,'outgoing team retains historical performance');
+ const receivingCookie=(await request('login',{username:'renamed-cf',password})).cookie;assert.equal((await request('read',{ref:{kind:'collection',path:'planters'}},receivingCookie)).body.rows.length,1);
+ assert.equal((await request('read',{ref:{kind:'collection',path:'farmers'}},receivingCookie)).body.rows.length,2,'receiving machine retains both past handovers');
+ assert.equal((await db.collection('documents').findOne({path:'farmers/'+nextFarmer.id}))?.value.status,'released');assert.deepEqual((await db.collection('documents').findOne({path:openingPath}))?.value.photos,[photo],'transfer preserves opening counter evidence');
+ console.log('Movement backend passed: atomic handover closure, next registration, role limits, immutable QR/photos/meters, outgoing receipts/history and receiving branch access.');
  await request('logout',{},cookie);assert.equal((await request('read',{ref:{kind:'collection',path:'users'}},cookie)).status,401);
  console.log('Mongo backend passed: real replica-set transactions, bootstrap once, hashed credentials, login/logout/revocation, Admin user creation, duplicate rollback, hierarchy-scoped reads, forged-role/direct-write denial, QR distribution, machine and farmer onboarding.');
 }finally{await new Promise<void>(resolve=>server.close(()=>resolve()));await closeMongo();await replica.stop();}
