@@ -1,6 +1,11 @@
 import { branchIds, reportingAncestors, canManageMachine, type FieldMachine } from '../src/lib/fieldOperations.js';
 import { canSeeSeason, type SeasonSchedule } from '../src/lib/seasonOperations.js';
 import type { UserProfile } from '../src/types.js';
+export function hideCounterCalculation(actor:UserProfile,value:any){
+ if(actor.role==='farm_mechanization'||!value?.meter)return value;
+ const hide=(meter:any)=>meter?{before:meter.before,after:meter.after}:meter;
+ return {...value,meter:hide(value.meter),history:(value.history||[]).map((row:any)=>({...row,...(row.meter?{meter:hide(row.meter)}:{})}))};
+}
 export function visibleRecords(actor:UserProfile,all:Record<string,any>){
  const users=Object.entries(all).filter(([path])=>/^users\/[^/]+$/.test(path)).map(([,value])=>value as UserProfile);
  const branch=branchIds(users,actor.uid),directory=new Set([...branch,...reportingAncestors(users,actor.uid).map(user=>user.uid)]),global=['admin','farm_mechanization'].includes(actor.role);
@@ -24,5 +29,5 @@ export function visibleRecords(actor:UserProfile,all:Record<string,any>){
  case 'season_schedules':return canSeeSeason(actor,row as SeasonSchedule,users)||historySeasons.has(id);
  default:return false;
  }
- }));
+ }).map(([path,row])=>[path,path.startsWith('season_production/')?hideCounterCalculation(actor,row):row]));
 }

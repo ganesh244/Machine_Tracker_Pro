@@ -6,7 +6,7 @@ import { linkedRecords, mediaLinks } from '../server/media.js';
 import { isPresetLocation } from '../src/lib/locations.js';
 import { mongo, ensureIndexes, records, transaction, context, invalidateRecords, listRecords } from '../server/mongo.js';
 import { validateCredentials, verifyPassword, hashPassword, issueSession, currentUser, logout, cookie, throttle, setupAdmin } from '../server/auth.js';
-import { visibleRecords } from '../server/scope.js';
+import { visibleRecords,hideCounterCalculation } from '../server/scope.js';
 import * as field from '../src/lib/fieldOperations.js';
 import * as maintenance from '../src/lib/maintenance.js';
 import * as seasons from '../src/lib/seasonOperations.js';
@@ -105,7 +105,7 @@ export default async function handler(req:any,res:any){
     const user=await transaction(async session=>{const current=context.getStore()!.records['users/'+actor.uid];if(current?.role!=='admin')throw new Error('Admin access required.');const {password:ignoredPassword,...publicDetails}=details;const profile=await createTeamUser(current,publicDetails);await db.collection('accounts').insertOne({uid:profile.uid,username:details.username.toLowerCase(),passwordHash,createdAt:new Date()},{session});return profile;});return res.json({result:user});
    }
    const command=Object.hasOwn(commands,body.name)?commands[body.name]:undefined;if(!command)return res.status(400).json({error:'Unknown operation.'});
-   const result=await transaction(async()=>{const canonical=context.getStore()!.records['users/'+actor.uid];if(!canonical)throw new Error('Account not found.');const result=await command(canonical,...args);const store=context.getStore()!;const visible=visibleRecords(canonical,store.records);return {result:result??null,changes:Object.fromEntries([...store.changed].filter(path=>Object.hasOwn(visible,path)).map(path=>[path,mediaLinks(path,visible[path])]))};},['updateSeasonSchedule','archiveSeasonSchedule'].includes(body.name)||(body.name==='createSeasonSchedule'&&isPresetLocation(args[0]?.state,args[0]?.district))?['users','season_schedules','notifications','planters']:undefined);return res.json(result);
+   const result=await transaction(async()=>{const canonical=context.getStore()!.records['users/'+actor.uid];if(!canonical)throw new Error('Account not found.');const result=await command(canonical,...args);const store=context.getStore()!;const visible=visibleRecords(canonical,store.records);return {result:body.name==='saveSeasonProduction'?hideCounterCalculation(canonical,result):result??null,changes:Object.fromEntries([...store.changed].filter(path=>Object.hasOwn(visible,path)).map(path=>[path,mediaLinks(path,visible[path])]))};},['updateSeasonSchedule','archiveSeasonSchedule'].includes(body.name)||(body.name==='createSeasonSchedule'&&isPresetLocation(args[0]?.state,args[0]?.district))?['users','season_schedules','notifications','planters']:undefined);return res.json(result);
   }
   return res.status(404).json({error:'Unknown request.'});
  }catch(error:any){

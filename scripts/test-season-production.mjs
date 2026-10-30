@@ -35,5 +35,7 @@ const start=await api.saveSeasonMeterStart(cf,{scheduleId:future.id,machineId:ma
 await api.saveMeterCalibration(admin,2100);const start2=await api.saveSeasonMeterStart(cf,{scheduleId:future.id,machineId:machine.id,scannedQRId:machine.id,reading:100,photos:[]});assert.equal(start2.revolutionsPerAcre,2000);assert.equal(start2.photos[0],'start');
 await assert.rejects(api.saveSeasonMeterStart(cf,{scheduleId:future.id,machineId:machine.id,scannedQRId:'wrong',reading:100,photos:['start']}));
 console.log('MCP counters passed: 1,997 rev/acre conversion, both photo requirements, saved opening lock, Admin calibration, preserved historical calibration, negative/reset/fractional reading rejection.');
+const claim=await api.saveSeasonProduction(cf,{...details,totalAcres:600,crops:[{crop:'Soybean',acres:600}],meter:{before:0,after:998500,beforePhotos:[],afterPhotos:['counter-proof']}});assert.equal(claim.totalAcres,600);assert.equal(claim.meter.acres,500);console.log('Independent claim passed: 600 claimed acres vs 500 calculated acres.');
 await api.archiveSeasonSchedule(fm,schedule.id,true);await assert.rejects(api.saveSeasonProduction(cf,details));
 console.log('Season production passed: QR/role/scope/date validation, crop reconciliation, zero use, corrections and history, no double counting, year filters, manager notifications, original machine preservation.');
+

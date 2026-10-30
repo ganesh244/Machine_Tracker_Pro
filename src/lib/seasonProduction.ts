@@ -31,7 +31,7 @@ export async function saveSeasonProduction(actor:UserProfile,details:{scheduleId
   if(opening&&input.before!==opening.reading)throw new Error('The opening reading must match the saved starting meter.');
   const calibration=opening||await readMeterCalibration(),acres=meterAcres(input.before,input.after,calibration.revolutionsPerAcre);
   meter={before:input.before,after:input.after,delta:input.after-input.before,revolutionsPerAcre:calibration.revolutionsPerAcre,calibrationRevision:'calibrationRevision' in calibration?calibration.calibrationRevision:calibration.revision,acres};
-  details={...details,totalAcres:acres};
+  // Claimed acreage is entered independently; the counter is evidence for FM review.
  }else if(details.meter)throw new Error('Counter conversion applies only to MCP machines.');
  const validAcres=(value:number)=>Number.isFinite(value)&&value>=0&&value<=10000000&&Math.abs(value*100-Math.round(value*100))<0.00001;
  if(!validAcres(details.totalAcres)||!Array.isArray(details.crops)||details.crops.length>30)throw new Error('Enter valid acreage with up to two decimal places.');
