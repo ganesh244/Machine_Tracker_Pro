@@ -1,3 +1,4 @@
+import {meterId,readMeterCalibration,validMeterPhotos} from './seasonMeter.js';
 import { MACHINE_TYPES } from './fieldOperations.js';
 import { isCalendarDate } from './calendarDate.js';
 import { isPresetLocation } from './locations.js';
@@ -113,7 +114,7 @@ async function dispatch(now:Date){
  }
  if(count)await commit.commit();
 }
-export async function saveSeasonInspection(actor:UserProfile,details:{scheduleId:string;machineId:string;scannedQRId:string;phase:'pre'|'post';checks:Record<string,boolean>;notes:string;photos:string[];estimatedCost:number}){
+export async function saveSeasonInspection(actor:UserProfile,details:{scheduleId:string;machineId:string;scannedQRId:string;phase:'pre'|'post';checks:Record<string,boolean>;notes:string;photos:string[];estimatedCost:number;openingMeter?:{reading:number;photos:string[]}}){
  if(isRemoteBrowser)return remoteCommand('saveSeasonInspection',[details]);
  await verify(actor);if(!['cf','jcf','area_manager','district_manager'].includes(actor.role))throw new Error('CF/JCF and Area / District Managers complete seasonal inspections.');
  const [users,scheduleDoc,machineDoc]=await Promise.all([profiles(),getDoc(doc(db,'season_schedules',details.scheduleId)),getDoc(doc(db,'planters',details.machineId))]);
@@ -130,12 +131,20 @@ export async function saveSeasonInspection(actor:UserProfile,details:{scheduleId
  const ready=keys.every(key=>details.checks[key]);if(!ready&&details.notes.trim().length<10)throw new Error('Describe the failed checks and service needed in at least 10 characters.');
  const id=`${schedule.id}-${details.phase}-${machine.id}`;
  if((await getDoc(doc(db,'season_inspections',id))).exists())throw new Error('This machine already has a report for this season and phase.');
+ let openingRecord:any;
+ if(details.phase==='pre'&&(machine.machineType||machine.type)==='MCP'){
+  const meter=details.openingMeter;if(!meter||!Number.isSafeInteger(meter.reading)||meter.reading<0||meter.reading>999999||!validMeterPhotos(meter.photos)||!meter.photos.length)throw new Error('Enter the six-digit opening counter (000000–999999) and attach its photo.');
+  const openingId=meterId(schedule.id,machine.id,'before'),prior=await getDoc(doc(db,'season_meter_readings',openingId));
+  if(prior.exists()&&prior.data().reading!==meter.reading)throw new Error('This season already has a different saved opening counter.');
+  const calibration=prior.exists()?prior.data():await readMeterCalibration();
+  openingRecord=prior.exists()?prior.data():{id:openingId,scheduleId:schedule.id,machineId:machine.id,phase:'before',reading:meter.reading,photos:meter.photos,revolutionsPerAcre:calibration.revolutionsPerAcre,calibrationRevision:calibration.revision,recordedBy:actor.uid,recordedByName:actor.displayName,timestamp:new Date().toISOString()};
+ }
  let maintenanceId:string|undefined;
  if(!ready){const requests=await getDocs(collection(db,'maintenance_requests'));const existing=requests.docs.find(row=>row.data().planterId===machine.id&&!['completed','rejected','cancelled'].includes(row.data().status));
   maintenanceId=existing?.id||(await raiseMaintenance(actor,machine.id,{requestType:details.phase==='pre'?'repair':'regular_service',severity:'medium',description:`${details.phase==='pre'?'Pre':'Post'}-season: ${details.notes.trim()}`,partDamaged:'Seasonal inspection findings',estimatedCost:details.estimatedCost,photos:details.photos,machineStopped:true})).id;
  }
  const timestamp=new Date().toISOString(),report:SeasonInspection={id,scheduleId:schedule.id,machineId:machine.id,scannedQRId:details.scannedQRId,phase:details.phase,ready,checks:details.checks,notes:details.notes.trim(),photos:details.photos,recordedBy:actor.uid,recordedByName:actor.displayName,timestamp,...(maintenanceId?{maintenanceId}:{})};
- const commit=writeBatch(db);commit.set(doc(db,'season_inspections',id),report);
+ const commit=writeBatch(db);commit.set(doc(db,'season_inspections',id),report);if(openingRecord)commit.set(doc(db,'season_meter_readings',openingRecord.id),openingRecord);
  if(!ready)commit.update(doc(db,'planters',machine.id),{status:'maintenance',operatingStatus:'maintenance',lastUpdated:timestamp});
  commit.set(doc(db,'planters',machine.id,'usageLogs',id),{type:'season_inspection',phase:details.phase,timestamp,imageUrl:details.photos[0],updatedBy:actor.displayName,notes:report.notes,ready,reportId:id});
  for(const user of users.filter(row=>canManageMachine(row,machine,users))){commit.set(doc(db,'notifications',`report-${id}-${user.uid}`),{userId:user.uid,title:`${details.phase==='pre'?'Pre':'Post'}-season report submitted`,message:`${machine.id}: ${ready?'all checks passed':'maintenance escalated'}. ${actor.displayName} submitted photo evidence.`,read:false,timestamp,page:'seasons',scheduleId:schedule.id,link:machine.id});}

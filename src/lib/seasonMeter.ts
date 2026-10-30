@@ -32,7 +32,7 @@ export async function saveSeasonMeterStart(actor:UserProfile,details:{scheduleId
  if(isRemoteBrowser)return remoteCommand('saveSeasonMeterStart',[details]);
  const {season}=await meterScope(actor,details.scheduleId,details.machineId,details.scannedQRId);
  if(season.endedAt||season.seasonEnd<new Date().toLocaleDateString('en-CA',{timeZone:'Asia/Kolkata'}))throw new Error('This season has ended. Enter both readings in its final acreage report.');
- if(!Number.isSafeInteger(details.reading)||details.reading<0||!validMeterPhotos(details.photos))throw new Error('Enter a valid whole-number reading and up to three photos.');
+ if(!Number.isSafeInteger(details.reading)||details.reading<0||details.reading>999999||!validMeterPhotos(details.photos))throw new Error('Enter a valid whole-number reading and up to three photos.');
  if((await getDoc(doc(db,'season_production',details.scheduleId+'_'+details.machineId))).exists())throw new Error('A final report already exists for this season.');
  const id=meterId(details.scheduleId,details.machineId,'before'),old=(await getDoc(doc(db,'season_meter_readings',id))).data() as SeasonMeterReading|undefined;
  if(old&&old.reading!==details.reading&&!details.photos.length)throw new Error('Attach a new counter photo when changing the starting reading.');

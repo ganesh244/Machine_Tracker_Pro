@@ -42,3 +42,14 @@ const next=await api.createSeasonSchedule(boss,{...details,name:'Next season'});
 console.log('Manual season ending passed: FM-only, dates advanced, evidence retained, duplicate/edit denied and next season created.');
 
 await api.dispatchSeasonAlerts();assert.ok((await data.getDocs(data.collection(db,'notifications'))).docs.filter(row=>row.id.startsWith('season-'+ending.id+'-')).every(row=>row.data().cancelled));console.log('Ended seasons stop and cancel seasonal reminders.');
+
+const meterBatch=await api.createQRBatch(admin,'DEMO inspection counter',1);const meterLabel=(await data.getDocs(data.collection(db,'qr_labels'))).docs.find(row=>row.data().batchId===meterBatch.id).id;
+await api.distributeQRLabels(admin,[meterLabel],district.uid);await api.distributeQRLabels(district,[meterLabel],area.uid);
+const meterMachine=await api.onboardFieldMachine(area,meterLabel,{state:'Telangana',district:'Nizamabad',mandal:'Armoor',village:'DEMO',lat:18.7,lng:78.2,machineType:'MCP',brand:'National',model:'Demo',serialNumber:'DEMO',cfId:cf.uid,photos:[]});
+const meterSeason=await api.createSeasonSchedule(boss,{...details,name:'Opening evidence demo',seasonStart:today,seasonEnd:'2099-12-01',preAlertDate:today,postAlertDate:'2099-12-02'});
+const inspection={scheduleId:meterSeason.id,machineId:meterMachine.id,scannedQRId:meterMachine.id,phase:'pre',checks:Object.fromEntries(Object.keys(api.PRE_CHECKS).map(key=>[key,true])),notes:'Demo inspected',photos:['machine-proof'],estimatedCost:0};
+await assert.rejects(api.saveSeasonInspection(cf,inspection),/six-digit/);
+await assert.rejects(api.saveSeasonInspection(cf,{...inspection,openingMeter:{reading:1000000,photos:['proof']}}),/six-digit/);
+await api.saveSeasonInspection(cf,{...inspection,openingMeter:{reading:123,photos:['opening-photo']}});
+const opening=(await data.getDoc(data.doc(db,'season_meter_readings',meterSeason.id+'_'+meterMachine.id+'_before'))).data();assert.equal(opening.reading,123);assert.deepEqual(opening.photos,['opening-photo']);assert.equal(opening.scheduleId,meterSeason.id);
+console.log('Pre-season MCP inspection requires opening evidence and saves it with the same machine/season.');
