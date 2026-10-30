@@ -81,7 +81,8 @@ export async function endSeasonSchedule(actor:UserProfile,id:string,note:string)
  const now=new Date().toISOString(),end=day();if(schedule.seasonStart>end)throw new Error('This season has not started yet.');
  const updated={...schedule,endedAt:now,endedBy:actor.uid,endNote:note.trim(),seasonEnd:schedule.seasonEnd>end?end:schedule.seasonEnd,postAlertDate:schedule.postAlertDate>end?end:schedule.postAlertDate,updatedAt:now};
  const commit=writeBatch(db);commit.update(snapshot.ref,updated);
- for(const user of seasonRecipients(updated,await profiles()))commit.set(doc(db,'notifications',`season-ended-${id}-${user.uid}`),{userId:user.uid,title:'Season ended · final reports due',message:`${schedule.name}: Farm Mechanization ended field work. Complete post-season inspection and crop-wise acreage. ${note.trim()}`,read:false,timestamp:now,page:'production',scheduleId:id});
+ for(const user of seasonRecipients(updated,await profiles()))commit.set(doc(db,'notifications',`season-ended-${id}-${user.uid}`),{userId:user.uid,title:'Season ended',message:`${schedule.name}: Farm Mechanization ended this season. Seasonal reminders are stopped. Saved reports remain available. ${note.trim()}`,read:false,timestamp:now,page:'production',scheduleId:id});
+ const existingNotes=await getDocs(collection(db,'notifications'));for(const row of existingNotes.docs)if(row.data().scheduleId===id&&row.id.startsWith('season-'+id+'-'))commit.update(row.ref,{cancelled:true});
  await commit.commit();await dispatchSeasonAlerts();return updated;
 }
 export async function archiveSeasonSchedule(actor:UserProfile,id:string,archived:boolean){
@@ -102,7 +103,7 @@ async function dispatch(now:Date){
  const [users,snapshots]=await Promise.all([profiles(),getDocs(collection(db,'season_schedules'))]);
  const schedules=await reconcileSeasonRecipients(users,snapshots.docs.map(row=>row.data() as SeasonSchedule));
  const commit=writeBatch(db);let count=0;
- for(const schedule of schedules){if(schedule.archived)continue;
+ for(const schedule of schedules){if(schedule.endedAt){const old=await getDocs(collection(db,'notifications'));for(const row of old.docs)if(row.data().scheduleId===schedule.id&&row.id.startsWith('season-'+schedule.id+'-')&&!row.data().cancelled){commit.update(row.ref,{cancelled:true});count++;}continue;}if(schedule.archived)continue;
   for(const phase of ['pre','post'] as const){if((phase==='pre'?schedule.preAlertDate:schedule.postAlertDate)>day(now))continue;
    for(const user of seasonRecipients(schedule,users)){
     const id=`season-${schedule.id}-${phase}-${user.uid}`;if((await getDoc(doc(db,'notifications',id))).exists())continue;

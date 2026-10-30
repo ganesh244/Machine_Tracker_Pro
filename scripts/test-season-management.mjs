@@ -40,3 +40,5 @@ await assert.rejects(api.updateSeasonSchedule(boss,ending.id,details));
 assert.equal((await data.getDoc(reports)).data().notes,'Preserved evidence');
 const next=await api.createSeasonSchedule(boss,{...details,name:'Next season'});assert.notEqual(next.id,ending.id);
 console.log('Manual season ending passed: FM-only, dates advanced, evidence retained, duplicate/edit denied and next season created.');
+
+await api.dispatchSeasonAlerts();assert.ok((await data.getDocs(data.collection(db,'notifications'))).docs.filter(row=>row.id.startsWith('season-'+ending.id+'-')).every(row=>row.data().cancelled));console.log('Ended seasons stop and cancel seasonal reminders.');

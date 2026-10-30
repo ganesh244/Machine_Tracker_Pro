@@ -9,7 +9,7 @@ export interface OverviewAction {id:string;kind:'inspection'|'production'|'meter
 export function buildOverviewActions(actor:UserProfile,users:UserProfile[],inputMachines:FieldMachine[],schedules:SeasonSchedule[],inspections:SeasonInspection[],production:SeasonProduction[],readings:SeasonMeterReading[],requests:FieldMaintenance[],now=new Date()):OverviewAction[]{
  const machines=inputMachines.filter(machine=>canManageMachine(actor,machine,users)),ids=new Set(machines.map(row=>row.id)),today=now.toLocaleDateString('en-CA',{timeZone:'Asia/Kolkata'}),actions:OverviewAction[]=[];
  const field=['cf','jcf','area_manager','district_manager'].includes(actor.role),reporter=['cf','jcf','area_manager'].includes(actor.role);
- for(const schedule of schedules){if(schedule.archived||!canSeeSeason(actor,schedule,users))continue;const target=machines.filter(machine=>machine.qrLabelId&&machineInSeason(machine,schedule,users));if(!target.length)continue;
+ for(const schedule of schedules){if(schedule.archived||schedule.endedAt||!canSeeSeason(actor,schedule,users))continue;const target=machines.filter(machine=>machine.qrLabelId&&machineInSeason(machine,schedule,users));if(!target.length)continue;
   const place=[schedule.name,schedule.state,schedule.district].filter(Boolean).join(' · ');
   for(const phase of ['pre','post'] as const){const date=phase==='pre'?schedule.preAlertDate:schedule.postAlertDate;if(date>today||phase==='pre'&&today>schedule.seasonEnd)continue;
    const completed=new Set(inspections.filter(row=>row.scheduleId===schedule.id&&row.phase===phase).map(row=>row.machineId)),pending=target.filter(machine=>!completed.has(machine.id));

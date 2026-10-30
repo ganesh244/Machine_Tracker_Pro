@@ -119,7 +119,7 @@ export function OperationsWorkspace({ onOpenTools, sessionUser, onSignOut }: { o
   const labelManagers = users.filter(user => actor && canReceiveLabels(actor, user, users));
   const canDistribute = actor && ['admin', 'district_manager'].includes(actor.role);
   const fieldRole = actor && ['cf', 'jcf', 'area_manager'].includes(actor.role);
-  const myAlerts = notificationRecords.rows.filter(row => row.userId === actorId && !row.cancelled && !row.read && !readAlertIds.includes(row.id)).sort((a,b) => String(b.timestamp || '').localeCompare(String(a.timestamp || '')));
+  const myAlerts = notificationRecords.rows.filter(row => row.userId === actorId && !row.cancelled && !(row.scheduleId&&scheduleRecords.rows.some(schedule=>schedule.id===row.scheduleId&&schedule.endedAt)&&String(row.id).startsWith('season-'+row.scheduleId+'-')) && !row.read && !readAlertIds.includes(row.id)).sort((a,b) => String(b.timestamp || '').localeCompare(String(a.timestamp || '')));
   const unreadAlerts = myAlerts.filter(row => !row.read);
   const onboardingRole = actor && ['area_manager','district_manager'].includes(actor.role);
   const filteredLabels = labels.filter(label => label.batchId === batchFilter && (labelFilter === 'all' || (labelFilter === 'mine' ? label.holderId === actorId && label.status === 'available' : label.status === labelFilter)) && `${label.id} ${nameOf(users, label.holderId)}`.toLowerCase().includes(search.toLowerCase()));
