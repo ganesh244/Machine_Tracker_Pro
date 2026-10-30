@@ -1,4 +1,5 @@
 import {releaseLeadFarmer,transferFieldMachine} from '../src/lib/machineMovements.js';
+import {previewWorkspaceReset,resetOperationalWorkspace,restoreOperationalWorkspace} from '../server/workspaceReset.js';
 import { saveMeterCalibration,saveSeasonMeterStart } from '../src/lib/seasonMeter.js';
 import { saveSeasonProduction } from '../src/lib/seasonProduction.js';
 import { linkedRecords, mediaLinks } from '../server/media.js';
@@ -53,6 +54,9 @@ export default async function handler(req:any,res:any){
   }
   if(action==='logout'){await logout(req);res.setHeader('Set-Cookie',cookie('',0));return res.json({ok:true});}
   const actor=await currentUser(req);if(!actor)return res.status(401).json({error:'Sign in to continue.'});
+  if(action==='resetPreview')return res.json(await previewWorkspaceReset(actor));
+  if(action==='resetOperations')return res.json(await resetOperationalWorkspace(actor,body));
+  if(action==='restoreOperations')return res.json(await restoreOperationalWorkspace(actor,body.backupId));
   if(action==='read'||action==='readMany'){
    if(action==='readMany'&&(!Array.isArray(body.refs)||!body.refs.length||body.refs.length>50))throw new Error('Choose between 1 and 50 record references.');
    const refs=(action==='readMany'?body.refs:[body.ref]).map(validateRef);console.info('FarmMech loading records',{action,elapsed:Date.now()-requestStarted});const visible=linkedRecords(visibleRecords(actor,await listRecords()));console.info('FarmMech records loaded',{action,count:Object.keys(visible).length,elapsed:Date.now()-requestStarted});
