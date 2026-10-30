@@ -35,7 +35,14 @@ await assert.rejects(workflow.onboardFieldMachine(area, ids[30], details), 'Undi
 const outsider = { uid: 'outside-cf', email: 'outside@demo.local', displayName: 'Other branch CF', role: 'cf', parentId: district.uid };
 await data.setDoc(data.doc(db, 'users', outsider.uid), outsider);
 await assert.rejects(workflow.onboardFieldMachine(area, ids[0], { ...details, cfId: outsider.uid }), 'Cannot assign a CF outside the area branch');
-const machine = await workflow.onboardFieldMachine(area, ids[0], details);
+await assert.rejects(workflow.onboardFieldMachine(area,ids[0],{...details,brand:'National',configuration:{tines:10,boxes:2}}));
+const configured={...details,brand:'National',configuration:{tines:11,boxes:3}};
+const machine = await workflow.onboardFieldMachine(area, ids[0], configured);
+assert.deepEqual((await data.getDoc(data.doc(db,'planters',machine.id))).data().configuration,{tines:11,boxes:3});
+await assert.rejects(workflow.onboardFieldMachine(area,ids[1],{...details,machineType:'Laser land leveller',brand:'T&D',configuration:{autoSurvey:'yes',powerSource:'PTO pump'}}));
+const laser=await workflow.onboardFieldMachine(area,ids[1],{...details,machineType:'Laser land leveller',brand:'T&D',configuration:{autoSurvey:false,powerSource:'PTO pump'}});
+assert.deepEqual((await data.getDoc(data.doc(db,'planters',laser.id))).data().configuration,{autoSurvey:false,powerSource:'PTO pump'});
+
 assert.equal(machine.currentHolderId, cf.uid);
 assert.equal((await data.getDoc(data.doc(db, 'qr_labels', ids[0]))).data().status, 'attached');
 await assert.rejects(workflow.onboardFieldMachine(area, ids[0], details), 'A QR can only onboard one machine');
