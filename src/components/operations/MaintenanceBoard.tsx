@@ -13,8 +13,9 @@ export function MaintenanceBoard({ actor, users, machines, requests, serviceLogs
   const [busy, setBusy] = useState(false), [error, setError] = useState('');
   const fieldRole = ['cf', 'jcf', 'area_manager', 'district_manager'].includes(actor.role);
   const canReportRepair = ['cf', 'jcf', 'admin'].includes(actor.role);
-  const queue = requests.filter(request => pendingRole(request) === actor.role);
-  const visible = requests.filter(request => filter === 'all' || (filter === 'mine' ? pendingRole(request) === actor.role : request.status === filter)).sort((a, b) => b.timestamp.localeCompare(a.timestamp));
+  const reviewable = (request:FieldMaintenance) => {const machine=machines.find(item=>item.id===request.planterId);return !!machine&&canReviewMaintenance(actor,request,machine,users);};
+  const queue = requests.filter(reviewable);
+  const visible = requests.filter(request => filter === 'all' || (filter === 'mine' ? reviewable(request) : request.status === filter)).sort((a, b) => b.timestamp.localeCompare(a.timestamp));
   useEffect(() => { if (!dialog) return; const old = document.body.style.overflow; document.body.style.overflow = 'hidden'; const handle = (event: KeyboardEvent) => { if (event.key === 'Escape') setDialog(null); }; window.addEventListener('keydown', handle); return () => { document.body.style.overflow = old; window.removeEventListener('keydown', handle); }; }, [dialog]);
   const open = (mode: typeof dialog, request?: FieldMaintenance) => { setReviewingLog(null); setSelected(request || null); setPhotos([]); setError(''); setDialog(mode); };
   const run = async (operation: () => Promise<unknown>, message: string) => { setBusy(true); setError(''); try { await operation(); setDialog(null); onNotice(message); } catch (err) { setError(err instanceof Error ? err.message : 'Could not save.'); } finally { setBusy(false); } };
