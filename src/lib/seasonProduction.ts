@@ -9,7 +9,7 @@ import type { UserProfile } from '../types.js';
 export interface CropAcreage { crop:string; acres:number }
 export interface SeasonProduction { id:string; scheduleId:string; seasonName:string; seasonStart:string; seasonEnd:string; machineId:string; machineType:string; totalAcres:number; meter?:SeasonMeterSummary; crops:CropAcreage[]; notes:string; photos:string[]; village:string; mandal:string; district:string; state:string; cfId:string; recordedBy:string; recordedByName:string; createdAt:string; updatedAt:string; revision:number; history:{totalAcres:number;crops:CropAcreage[];recordedBy:string;at:string;meter?:SeasonMeterSummary}[] }
 export const canonicalCrop=(value:string)=>{const name=value.trim().replace(/\s+/g,' '),key=name.toLowerCase().replace(/[^a-z]/g,'');return ['soybean','soyabean','soybeans','soyabeans'].includes(key)?'Soybean':['maize','corn'].includes(key)?'Maize':['paddy','rice'].includes(key)?'Paddy':name;};
-export const seasonEnded=(schedule:SeasonSchedule)=>schedule.seasonEnd<new Date().toLocaleDateString('en-CA',{timeZone:'Asia/Kolkata'});
+export const seasonEnded=(schedule:SeasonSchedule)=>!!schedule.endedAt||schedule.seasonEnd<new Date().toLocaleDateString('en-CA',{timeZone:'Asia/Kolkata'});
 export async function saveSeasonProduction(actor:UserProfile,details:{scheduleId:string;machineId:string;scannedQRId:string;totalAcres:number;crops:CropAcreage[];notes:string;photos:string[];meter?:{before:number;after:number;beforePhotos:string[];afterPhotos:string[]}}){
  if(isRemoteBrowser)return remoteCommand('saveSeasonProduction',[details]);
  const users=(await getDocs(collection(db,'users'))).docs.map(row=>row.data() as UserProfile),canonical=users.find(user=>user.uid===actor.uid);

@@ -7,7 +7,7 @@ import { db } from './database.js';
 import { branchIds, reportingAncestors, canManageMachine, type FieldMachine } from './fieldOperations.js';
 import { raiseMaintenance } from './maintenance.js';
 import type { UserProfile } from '../types.js';
-export interface SeasonSchedule { id:string; name:string; state?:string; audience?:'branch'|'location'; district:string; ownerId:string; seasonStart:string; seasonEnd:string; preAlertDate:string; postAlertDate:string; createdAt:string; archived?:boolean; updatedAt?:string; coverage?:'selected_machines'|'machine_types'|'all_machines'; machineIds?:string[]; machineTypes?:string[]; recipientIds?:string[] }
+export interface SeasonSchedule { id:string; name:string; state?:string; audience?:'branch'|'location'; district:string; ownerId:string; seasonStart:string; seasonEnd:string; preAlertDate:string; postAlertDate:string; createdAt:string; endedAt?:string; endedBy?:string; endNote?:string; archived?:boolean; updatedAt?:string; coverage?:'selected_machines'|'machine_types'|'all_machines'; machineIds?:string[]; machineTypes?:string[]; recipientIds?:string[] }
 export interface SeasonInspection { id:string; scheduleId:string; machineId:string; scannedQRId?:string; phase:'pre'|'post'; ready:boolean; checks:Record<string,boolean>; notes:string; photos:string[]; maintenanceId?:string; recordedBy:string; recordedByName:string; timestamp:string }
 export const PRE_CHECKS:Record<string,string>={mechanism:'Mechanism / moving parts checked',safety:'Safety guards and fasteners okay',trial:'Trial run completed',ready:'Machine ready for field use'};
 export const POST_CHECKS:Record<string,string>={cleaned:'Machine cleaned',lubricated:'Lubrication / regular service completed',covered:'Machine covered',secure:'Parked in a secure location',shade:'Parked under shade'};
@@ -67,10 +67,22 @@ export async function updateSeasonSchedule(actor:UserProfile,id:string,details:P
  if(!snapshot.exists())throw new Error('Season schedule not found.');
  const schedule=snapshot.data() as SeasonSchedule;
  if(!canManageSeason(actor,schedule))throw new Error('Only Admin, Farm Mechanization or the owning District Manager can manage this schedule.');
- if(schedule.archived)throw new Error('Restore this schedule before editing it.');
+ if(schedule.archived||schedule.endedAt)throw new Error('Archived or ended seasons cannot be edited. Create the next season instead.');
  if(!details.name.trim()||![details.seasonStart,details.seasonEnd,details.preAlertDate,details.postAlertDate].every(validDate)||details.preAlertDate>details.seasonStart||details.seasonEnd<details.seasonStart||details.postAlertDate<details.seasonEnd)throw new Error('Enter a season name and valid season / reminder dates.');
  const users=await profiles();const updated={...schedule,name:details.name.trim(),seasonStart:details.seasonStart,seasonEnd:details.seasonEnd,preAlertDate:details.preAlertDate,postAlertDate:details.postAlertDate,coverage:details.coverage??schedule.coverage,machineIds:details.machineIds??schedule.machineIds,machineTypes:details.machineTypes??schedule.machineTypes,updatedAt:new Date().toISOString()};Object.assign(updated,await targetMachines(actor,updated,users));
  const commit=writeBatch(db);commit.set(doc(db,'season_schedules',id),updated);await commit.commit();await syncRecipients(updated,users);await dispatchSeasonAlerts();return updated;
+}
+export async function endSeasonSchedule(actor:UserProfile,id:string,note:string){
+ if(isRemoteBrowser)return remoteCommand('endSeasonSchedule',[id,note]);
+ await verify(actor);if(actor.role!=='farm_mechanization')throw new Error('Only Farm Mechanization Team can end a season.');
+ const snapshot=await getDoc(doc(db,'season_schedules',id));if(!snapshot.exists())throw new Error('Season schedule not found.');
+ const schedule=snapshot.data() as SeasonSchedule;if(schedule.archived||schedule.endedAt)throw new Error('This season is archived or already ended.');
+ if(typeof note!=='string'||note.trim().length<5||note.length>1000)throw new Error('Enter a closing note of 5–1,000 characters.');
+ const now=new Date().toISOString(),end=day();if(schedule.seasonStart>end)throw new Error('This season has not started yet.');
+ const updated={...schedule,endedAt:now,endedBy:actor.uid,endNote:note.trim(),seasonEnd:schedule.seasonEnd>end?end:schedule.seasonEnd,postAlertDate:schedule.postAlertDate>end?end:schedule.postAlertDate,updatedAt:now};
+ const commit=writeBatch(db);commit.update(snapshot.ref,updated);
+ for(const user of seasonRecipients(updated,await profiles()))commit.set(doc(db,'notifications',`season-ended-${id}-${user.uid}`),{userId:user.uid,title:'Season ended · final reports due',message:`${schedule.name}: Farm Mechanization ended field work. Complete post-season inspection and crop-wise acreage. ${note.trim()}`,read:false,timestamp:now,page:'production',scheduleId:id});
+ await commit.commit();await dispatchSeasonAlerts();return updated;
 }
 export async function archiveSeasonSchedule(actor:UserProfile,id:string,archived:boolean){
  if(isRemoteBrowser)return remoteCommand('archiveSeasonSchedule',[id,archived]);

@@ -28,3 +28,15 @@ assert.ok((await notes()).docs.every(row=>!row.data().cancelled));assert.equal((
 assert.ok((await data.getDoc(reports)).exists());
 const another=await api.createSeasonSchedule(admin,{...details,name:'Another season'});assert.notEqual(another.id,schedule.id);
 console.log('Season management passed: role/ownership checks, edit validation, archive stops reminders/inspection, report preservation, restore/read-state/dedup, independent new schedule.');
+
+const today=new Date().toLocaleDateString('en-CA',{timeZone:'Asia/Kolkata'});
+const ending=await api.createSeasonSchedule(boss,{...details,name:'DEMO manual ending',seasonStart:today,seasonEnd:'2099-12-01',preAlertDate:today,postAlertDate:'2099-12-02'});
+for(const actor of [admin,state,district,area,cf,jcf])await assert.rejects(api.endSeasonSchedule(actor,ending.id,'Unauthorized ending'));
+await assert.rejects(api.endSeasonSchedule(boss,ending.id,''));
+const closed=await api.endSeasonSchedule(boss,ending.id,'Field work completed; collect final reports');
+assert.equal(closed.seasonEnd,today);assert.equal(closed.postAlertDate,today);assert.equal(closed.endedBy,boss.uid);assert.ok(closed.endedAt);assert.ok(!closed.archived);
+await assert.rejects(api.endSeasonSchedule(boss,ending.id,'Duplicate ending'));
+await assert.rejects(api.updateSeasonSchedule(boss,ending.id,details));
+assert.equal((await data.getDoc(reports)).data().notes,'Preserved evidence');
+const next=await api.createSeasonSchedule(boss,{...details,name:'Next season'});assert.notEqual(next.id,ending.id);
+console.log('Manual season ending passed: FM-only, dates advanced, evidence retained, duplicate/edit denied and next season created.');
