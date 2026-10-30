@@ -15,15 +15,21 @@ export async function previewWorkspaceReset(actor:UserProfile){
 }
 export async function resetOperationalWorkspace(actor:UserProfile,input:{revision:number;fingerprint:string;confirmation:string}){
  adminOnly(actor);if(input.confirmation!=='RESET OPERATIONS')throw new Error('Type RESET OPERATIONS to confirm.');
+ const {db:setupDb}=await mongo();
+ // Create backup namespaces before the transaction to avoid Atlas DDL lock retries.
+ for(const name of ['operation_reset_items','operation_resets'])try{await setupDb.createCollection(name);}catch(error:any){if(error.code!==48)throw error;}
+ console.info('FarmMech reset backup collections ready');
  const result=await transaction(async session=>{
   const store=context.getStore()!;if(store.records['users/'+actor.uid]?.role!=='admin')throw new Error('Admin access changed. Reload your account.');
   const {db}=await mongo();const rows=await db.collection('documents').find(filter,{session}).toArray(),version=(await db.collection('sync_meta').findOne({_id:'records' as any},{session}))?.revision||0;
   if(version!==input.revision||fingerprint(rows)!==input.fingerprint)throw new Error('The workspace changed. Review the latest counts before resetting.');
   if(!rows.length)throw new Error('The operational workspace is already empty.');
+  console.info('FarmMech reset snapshot loaded',{count:rows.length});
   const id=crypto.randomUUID(),createdAt=new Date().toISOString();
   // Photos stay in MongoDB in separate backup documents, without credentials.
   for(let start=0;start<rows.length;start+=250)await db.collection<any>('operation_reset_items').insertMany(rows.slice(start,start+250).map(row=>({_id:{resetId:id,path:row.path},resetId:id,path:row.path,value:row.value})),{session});
   await db.collection<any>('operation_resets').insertOne({_id:id,createdAt,createdBy:actor.uid,status:'available',total:rows.length,counts:counts(rows)},{session});
+  console.info('FarmMech reset archive saved',{count:rows.length});
   for(const row of rows){delete store.records[row.path];store.changed.add(row.path);}
   return {backupId:id,createdAt,total:rows.length,counts:counts(rows)};
  });return result;
