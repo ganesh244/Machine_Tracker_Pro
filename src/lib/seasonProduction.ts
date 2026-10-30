@@ -17,6 +17,7 @@ export async function saveSeasonProduction(actor:UserProfile,details:{scheduleId
  const [seasonDoc,machineDoc]=await Promise.all([getDoc(doc(db,'season_schedules',details.scheduleId)),getDoc(doc(db,'planters',details.machineId))]);
  if(!seasonDoc.exists()||!machineDoc.exists())throw new Error('Choose an existing season and machine.');
  const schedule=seasonDoc.data() as SeasonSchedule,machine=machineDoc.data() as FieldMachine;
+ if(schedule.endedAt)throw new Error('Farm Mechanization ended this season. Reports are read-only.');
  if(schedule.archived||!canSeeSeason(canonical,schedule,users)||!machineInSeason(machine,schedule,users)||!canManageMachine(canonical,machine,users))throw new Error('This machine is outside the active season or your reporting scope.');
  if(!seasonEnded(schedule))throw new Error('Submit final acreage after this season has ended.');
  if(details.scannedQRId!==(machine.qrLabelId||machine.id))throw new Error('Scan the QR on this machine before reporting seasonal acreage.');

@@ -24,7 +24,7 @@ export async function meterScope(actor:UserProfile,scheduleId:string,machineId:s
  const [seasonDoc,machineDoc]=await Promise.all([getDoc(doc(db,'season_schedules',scheduleId)),getDoc(doc(db,'planters',machineId))]);
  if(!canonical||canonical.role!==actor.role||!['cf','jcf','area_manager'].includes(actor.role)||!seasonDoc.exists()||!machineDoc.exists())throw new Error('The responsible CF, JCF or Area Manager must record the meter.');
  const season=seasonDoc.data() as SeasonSchedule,machine=machineDoc.data() as FieldMachine;
- if(season.archived||!canSeeSeason(canonical,season,users)||!machineInSeason(machine,season,users)||!canManageMachine(canonical,machine,users)||machineTypeName(machine)!=='MCP')throw new Error('Choose an MCP within this season and your reporting scope.');
+ if(season.archived||season.endedAt||!canSeeSeason(canonical,season,users)||!machineInSeason(machine,season,users)||!canManageMachine(canonical,machine,users)||machineTypeName(machine)!=='MCP')throw new Error('Choose an MCP within this season and your reporting scope.');
  if(scannedQRId!==(machine.qrLabelId||machine.id))throw new Error('Scan this machine’s QR before recording its meter.');return {season,machine};
 }
 export const validMeterPhotos=(photos:unknown):photos is string[]=>Array.isArray(photos)&&photos.length<=3&&photos.every(photo=>typeof photo==='string'&&photo.trim().length>0);

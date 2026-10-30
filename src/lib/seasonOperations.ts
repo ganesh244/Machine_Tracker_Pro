@@ -31,7 +31,7 @@ export function seasonRecipients(schedule:SeasonSchedule,users:UserProfile[]) {
 }
 export function canSeeSeason(actor:UserProfile,schedule:SeasonSchedule,users:UserProfile[]){return seasonRecipients(schedule,users).some(user=>user.uid===actor.uid);}
 export function canManageSeason(actor:UserProfile,schedule:SeasonSchedule){return ['admin','farm_mechanization'].includes(actor.role)||actor.role==='district_manager'&&schedule.ownerId===actor.uid;}
-export function canInspectSeason(actor:UserProfile,schedule:SeasonSchedule,users:UserProfile[]){return !schedule.archived&&['cf','jcf','area_manager','district_manager'].includes(actor.role)&&canSeeSeason(actor,schedule,users);}
+export function canInspectSeason(actor:UserProfile,schedule:SeasonSchedule,users:UserProfile[]){return !schedule.archived&&!schedule.endedAt&&['cf','jcf','area_manager','district_manager'].includes(actor.role)&&canSeeSeason(actor,schedule,users);}
 async function targetMachines(actor:UserProfile,schedule:SeasonSchedule,users:UserProfile[]){
  if(schedule.coverage&&!['selected_machines','machine_types','all_machines'].includes(schedule.coverage))throw new Error('Choose a valid machine coverage.');
  if(schedule.coverage==='all_machines'||!schedule.coverage)return {coverage:'all_machines' as const,machineIds:[],recipientIds:[]};
@@ -119,7 +119,7 @@ export async function saveSeasonInspection(actor:UserProfile,details:{scheduleId
  const [users,scheduleDoc,machineDoc]=await Promise.all([profiles(),getDoc(doc(db,'season_schedules',details.scheduleId)),getDoc(doc(db,'planters',details.machineId))]);
  if(!scheduleDoc.exists()||!machineDoc.exists())throw new Error('Choose an existing schedule and machine.');
  const schedule=scheduleDoc.data() as SeasonSchedule,machine=machineDoc.data() as FieldMachine;
- if(schedule.archived)throw new Error('This season schedule has been archived. Ask your manager to restore it.');
+ if(schedule.archived||schedule.endedAt)throw new Error('This season is closed. Reports are read-only.');
  if(details.scannedQRId!==(machine.qrLabelId||machine.id))throw new Error('Scan the QR attached to this machine before filling its inspection report.');
  if(!canInspectSeason(actor,schedule,users)||!machineInSeason(machine,schedule,users)||!canManageMachine(actor,machine,users))throw new Error('This inspection is outside your reporting branch.');
  if(!['pre','post'].includes(details.phase))throw new Error('Choose pre-season or post-season.');
