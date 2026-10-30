@@ -18,22 +18,23 @@ export async function resetOperationalWorkspace(actor:UserProfile,input:{revisio
  const {db:setupDb}=await mongo();
  // Create backup namespaces before the transaction to avoid Atlas DDL lock retries.
  for(const name of ['operation_reset_items','operation_resets'])try{await setupDb.createCollection(name);}catch(error:any){if(error.code!==48)throw error;}
- console.info('FarmMech reset backup collections ready');
- const result=await transaction(async session=>{
+ const id=crypto.randomUUID(),createdAt=new Date().toISOString();
+ // Copy full photo documents inside MongoDB, avoiding a network round-trip for every image.
+ // The transactional revision check below prevents clearing a concurrently changed workspace.
+ await setupDb.collection('documents').aggregate([{$match:filter},{$project:{_id:{resetId:{$literal:id},path:'$path'},resetId:{$literal:id},path:1,value:1}},{$merge:{into:'operation_reset_items',on:'_id',whenMatched:'fail',whenNotMatched:'insert'}}],{maxTimeMS:20000}).toArray();
+ console.info('FarmMech reset archive copied');
+ return transaction(async session=>{
   const store=context.getStore()!;if(store.records['users/'+actor.uid]?.role!=='admin')throw new Error('Admin access changed. Reload your account.');
-  const {db}=await mongo();const rows=await db.collection('documents').find(filter,{session}).toArray(),version=(await db.collection('sync_meta').findOne({_id:'records' as any},{session}))?.revision||0;
+  const {db}=await mongo();const rows=await db.collection('documents').find(filter,{session,projection:{path:1},maxTimeMS:20000}).toArray(),version=(await db.collection('sync_meta').findOne({_id:'records' as any},{session}))?.revision||0;
   if(version!==input.revision||fingerprint(rows)!==input.fingerprint)throw new Error('The workspace changed. Review the latest counts before resetting.');
   if(!rows.length)throw new Error('The operational workspace is already empty.');
-  console.info('FarmMech reset snapshot loaded',{count:rows.length});
-  const id=crypto.randomUUID(),createdAt=new Date().toISOString();
-  // Photos stay in MongoDB in separate backup documents, without credentials.
-  for(let start=0;start<rows.length;start+=250)await db.collection<any>('operation_reset_items').insertMany(rows.slice(start,start+250).map(row=>({_id:{resetId:id,path:row.path},resetId:id,path:row.path,value:row.value})),{session});
+  if(await db.collection('operation_reset_items').countDocuments({resetId:id},{session})!==rows.length)throw new Error('The backup is incomplete. No records were cleared.');
   await db.collection<any>('operation_resets').insertOne({_id:id,createdAt,createdBy:actor.uid,status:'available',total:rows.length,counts:counts(rows)},{session});
-  console.info('FarmMech reset archive saved',{count:rows.length});
   for(const row of rows){delete store.records[row.path];store.changed.add(row.path);}
   return {backupId:id,createdAt,total:rows.length,counts:counts(rows)};
- });return result;
+ },['users']);
 }
+
 export async function restoreOperationalWorkspace(actor:UserProfile,backupId:string){
  adminOnly(actor);if(typeof backupId!=='string'||backupId.length>100)throw new Error('Choose a valid reset backup.');
  return transaction(async session=>{
