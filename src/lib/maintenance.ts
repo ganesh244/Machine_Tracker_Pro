@@ -50,7 +50,8 @@ export function normalizeFieldMaintenance(raw: any): FieldMaintenance {
 }
 export const pendingRole = (request: FieldMaintenance) => APPROVAL_CHAIN.find(stage => stage.status === request.status)?.role;
 export function canReviewMaintenance(actor: UserProfile, request: FieldMaintenance, machine: FieldMachine, users: UserProfile[]) {
-  return pendingRole(request) === actor.role && request.requestedByUid !== actor.uid && canManageMachine(actor, machine, users);
+  const directFinal = actor.role === 'farm_mechanization' && ['pending_district_manager','pending_state_manager'].includes(request.status) && request.approvals?.areaManager?.approved === true;
+  return (pendingRole(request) === actor.role || directFinal) && request.requestedByUid !== actor.uid && canManageMachine(actor, machine, users);
 }
 async function context(actor: UserProfile, machineId: string) {
   const [profile, snapshot, userDocs] = await Promise.all([getDoc(doc(db, 'users', actor.uid)), getDoc(doc(db, 'planters', machineId)), getDocs(collection(db, 'users'))]);
@@ -98,11 +99,12 @@ export async function reviewMaintenance(actor: UserProfile, requestId: string, d
   if (decision === 'reject' && note.trim().length < 3) throw new Error('Give a reason for rejecting this request.');
   const route = maintenanceRoute(machine, users, request.requestedByUid);
   const index = route.findIndex(stage => stage.status === request.status);
-  const stage = route[index], next = route[index + 1];
+  const stage = actor.role === 'farm_mechanization' ? APPROVAL_CHAIN[3] : route[index], next = actor.role === 'farm_mechanization' ? undefined : route[index + 1];
   const status = decision === 'reject' ? 'rejected' : next?.status || 'approved';
   const commit = writeBatch(db);
   commit.update(doc(db, 'maintenance_requests', requestId), { workflowVersion: 2, status, approvals: { ...request.approvals, [stage.key]: { approved: decision === 'approve', by: actor.displayName, at: new Date().toISOString() } }, history: [...request.history, event(actor, decision === 'approve' ? `${stage.label} approved` : `${stage.label} rejected`, note)] });
   if (decision === 'approve') notify(commit, users, next?.role || 'admin', machine, next ? 'Maintenance review required' : 'Maintenance approved for repair', `${request.planterId}: ${next ? `waiting for ${next.label}` : 'Farm Mechanization Team gave final approval. Coordinate the repair.'}`);
+  if (decision === 'approve' && stage.role === 'area_manager' && next?.role !== 'farm_mechanization') notify(commit, users, 'farm_mechanization', machine, 'Maintenance ready for final approval', `${machine.id}: Area Manager approved. You can give final approval directly without waiting for District or State review.`);
   if (decision === 'approve' && !next) {
     notify(commit, users, 'cf', machine, 'Repair report required after service', `${machine.id}: final approval given. After the service team finishes, submit repairs, parts, cost, photos and the workable confirmation.`);
     notify(commit, users, 'jcf', machine, 'Repair report required after service', `${machine.id}: final approval given. Submit the service completion report after repairs.`);

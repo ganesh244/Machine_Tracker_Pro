@@ -80,6 +80,15 @@ const rejected = await maintenance.raiseMaintenance(jcf, machine.id, { ...issue,
 await rejects(maintenance.reviewMaintenance(area, rejected.id, 'reject', ''));
 await maintenance.reviewMaintenance(area, rejected.id, 'reject', 'Service interval not reached; inspect next month');
 assert.equal((await data.getDoc(data.doc(db, 'maintenance_requests', rejected.id))).data().status, 'rejected');
+const direct = await maintenance.raiseMaintenance(cf, machine.id, issue);
+await rejects(maintenance.reviewMaintenance(boss, direct.id, 'approve', 'Too early'));
+await maintenance.reviewMaintenance(area, direct.id, 'approve', 'Area verified');
+assert.ok((await data.getDocs(data.collection(db,'notifications'))).docs.some(row=>row.data().userId===boss.uid&&row.data().title==='Maintenance ready for final approval'));
+await maintenance.reviewMaintenance(boss, direct.id, 'approve', 'Direct final approval after Area review');
+const directSaved=(await data.getDoc(data.doc(db,'maintenance_requests',direct.id))).data();
+assert.equal(directSaved.status,'approved');assert.equal(directSaved.approvals.farmMechManager.approved,true);assert.equal(directSaved.approvals.stateManager,undefined);assert.equal(directSaved.approvals.districtManager,undefined);
+await rejects(maintenance.reviewMaintenance(state,direct.id,'approve','Late review'));
+assert.ok(directSaved.history.some(row=>row.role==='farm_mechanization'));
 const notifications = (await data.getDocs(data.collection(db, 'notifications'))).docs.map(record => record.data());
 assert.equal(notifications.some(note => note.userId === 'state-other' && note.link === machine.id), false, 'Approval notifications do not leak to another state');
 await data.setDoc(data.doc(db, 'maintenance_logs', 'legacy-service'), { planterId: machine.id, technicianName: 'Legacy technician', notes: 'Historical service record', approvalStatus: 'pending_farm_mech', createdByUid: cf.uid });
